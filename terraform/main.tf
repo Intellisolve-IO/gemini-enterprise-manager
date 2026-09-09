@@ -234,6 +234,8 @@ resource "google_iam_workload_identity_pool_provider" "github_provider" {
     "attribute.repository_owner" = "assertion.repository_owner"
   }
 
+  attribute_condition = "assertion.repository == '${var.github_repo}'"
+
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }

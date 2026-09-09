@@ -88,6 +88,7 @@ if ! gcloud iam workload-identity-pools providers describe "${PROVIDER_NAME}" \
     --location="global" \
     --issuer-uri="https://token.actions.githubusercontent.com" \
     --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+    --attribute-condition="assertion.repository == '${GITHUB_REPO}'" \
     --project="${PROJECT_ID}"
 else
   echo ">> Workload Identity Provider '${PROVIDER_NAME}' already exists."
