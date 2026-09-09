@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Gemini Enterprise License Provisioner{% endblock %}</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        google: {
+                            blue: '#1a73e8',
+                            hover: '#1557b0',
+                            green: '#34a853',
+                            yellow: '#fbbc04',
+                            red: '#ea4335',
+                            dark: '#202124'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="h-full flex flex-col font-sans text-slate-800 antialiased">
+    <!-- Navigation Bar -->
+    <nav class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <a href="/" class="flex items-center space-x-3 text-slate-900 font-semibold tracking-tight hover:opacity-90 transition">
+                        <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-sm">
+                            <i class="fa-solid fa-sparkles text-lg"></i>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-base font-bold text-slate-900 leading-none">Gemini Provisioner</span>
+                            <span class="text-xs text-slate-500 font-normal">Google Workspace &bull; GCP ge-hoffhouse</span>
+                        </div>
+                    </a>
+
+                    <div class="hidden md:flex space-x-1">
+                        <a href="/" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'dashboard' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                            <i class="fa-solid fa-chart-pie mr-1.5 opacity-80"></i> Dashboard
+                        </a>
+                        <a href="/groups" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'groups' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                            <i class="fa-solid fa-users mr-1.5 opacity-80"></i> Monitored Groups
+                        </a>
+                        <a href="/schedule" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'schedule' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                            <i class="fa-regular fa-clock mr-1.5 opacity-80"></i> Sync Schedule
+                        </a>
+                        <a href="/history" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'history' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                            <i class="fa-solid fa-clock-rotate-left mr-1.5 opacity-80"></i> Run History
+                        </a>
+                        <a href="/settings" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'settings' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                            <i class="fa-solid fa-gear mr-1.5 opacity-80"></i> Settings & Test
+                        </a>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <button id="nav-sync-btn" onclick="triggerManualSync()" class="inline-flex items-center px-3.5 py-1.5 border border-transparent text-xs font-semibold rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
+                        <i class="fa-solid fa-arrows-rotate mr-1.5"></i> Run Sync Now
+                    </button>
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                        <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> ge-hoffhouse
+                    </span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Alert / Toast Container -->
+    <div id="toast-container" class="fixed top-20 right-6 z-50 space-y-2 max-w-md w-full pointer-events-none"></div>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 mt-auto py-4">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center text-xs text-slate-500">
+            <div>Google Workspace Gemini Enterprise Automated Provisioner &bull; GCP Cloud Run &amp; Cloud Scheduler</div>
+            <div>Automated License Provisioning Engine</div>
+        </div>
+    </footer>
+
+    <!-- Global Scripts -->
+    <script>
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            const bgClass = type === 'success' ? 'bg-emerald-600 text-white' : 
+                            type === 'error' ? 'bg-rose-600 text-white' : 
+                            type === 'warning' ? 'bg-amber-500 text-white' : 'bg-slate-800 text-white';
+            const icon = type === 'success' ? 'fa-circle-check' : 
+                         type === 'error' ? 'fa-circle-xmark' : 
+                         type === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-info';
+
+            toast.className = `toast-enter pointer-events-auto p-4 rounded-lg shadow-lg flex items-start space-x-3 text-sm font-medium ${bgClass}`;
+            toast.innerHTML = `
+                <i class="fa-solid ${icon} mt-0.5 text-base"></i>
+                <div class="flex-1 leading-snug">${message}</div>
+                <button onclick="this.parentElement.remove()" class="opacity-75 hover:opacity-100 transition"><i class="fa-solid fa-xmark"></i></button>
+            `;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'transition', 'duration-300');
+                setTimeout(() => toast.remove(), 300);
+            }, 6000);
+        }
+
+        async function triggerManualSync() {
+            const btn = document.getElementById('nav-sync-btn');
+            const originalHTML = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin mr-1.5"></i> Syncing...`;
+            showToast('Triggering Gemini license synchronization in background...', 'info');
+
+            try {
+                const response = await fetch('/api/sync/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ triggered_by: 'admin_ui' })
+                });
+                const result = await response.json();
+                
+                if (response.ok && (result.status === 'SUCCESS' || result.status === 'PARTIAL_SUCCESS')) {
+                    showToast(`Sync Finished (${result.status}): Evaluated ${result.evaluated_users_count} user(s), Assigned ${result.licenses_assigned_count}, Errors: ${result.errors_count}.`, 'success');
+                    setTimeout(() => { window.location.reload(); }, 2000);
+                } else {
+                    showToast(`Sync Error: ${result.message || result.error || 'Check history logs'}`, 'error');
+                }
+            } catch (err) {
+                showToast('Failed to contact sync service: ' + err.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+        }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

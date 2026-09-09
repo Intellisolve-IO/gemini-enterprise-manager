@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}Settings &amp; DWD Connectivity &bull; Gemini Provisioner{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-4xl mx-auto">
+    <!-- Header -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h1 class="text-2xl font-bold text-slate-900 tracking-tight">System Settings &amp; API Connectivity</h1>
+        <p class="text-sm text-slate-500 mt-1">
+            Validate Domain-Wide Delegation (DWD) permissions and adjust Workspace license SKU targeting.
+        </p>
+    </div>
+
+    <!-- DWD Connectivity Test Card -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+                <h2 class="text-base font-bold text-slate-900 flex items-center">
+                    <i class="fa-solid fa-plug-circle-check mr-2 text-blue-600"></i> Service Account DWD Connectivity Test
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    Tests Admin SDK Directory API access using the current Service Account and Delegated Admin Email.
+                </p>
+            </div>
+            <button id="test-dwd-btn" onclick="runDwdTest()" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                <i class="fa-solid fa-vial mr-2 text-blue-600"></i> Test Connection
+            </button>
+        </div>
+
+        <!-- Live Test Result Output Box -->
+        <div id="dwd-result-box" class="hidden p-4 rounded-lg border text-sm">
+            <div class="flex items-start space-x-3">
+                <i id="dwd-result-icon" class="text-lg mt-0.5"></i>
+                <div class="space-y-1.5 flex-1">
+                    <p id="dwd-result-msg" class="font-semibold"></p>
+                    <p id="dwd-result-details" class="text-xs font-mono"></p>
+                    <div id="dwd-result-guidance" class="text-xs mt-2 p-2.5 rounded bg-white/70 border"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Required Scopes Reference -->
+        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-2">
+            <p class="text-xs font-bold uppercase tracking-wider text-slate-600">Required OAuth Scopes for Domain-Wide Delegation</p>
+            <p class="text-xs text-slate-500">
+                Ensure the Service Account Client ID is authorized in <strong>Google Admin Console &gt; Security &gt; Access and data control &gt; API controls &gt; Domain-wide delegation</strong> with:
+            </p>
+            <ul class="text-xs font-mono text-slate-700 space-y-1 pl-2">
+                <li>&bull; <code class="bg-slate-200/70 px-1 py-0.5 rounded">https://www.googleapis.com/auth/admin.directory.group.readonly</code></li>
+                <li>&bull; <code class="bg-slate-200/70 px-1 py-0.5 rounded">https://www.googleapis.com/auth/admin.directory.user.readonly</code></li>
+                <li>&bull; <code class="bg-slate-200/70 px-1 py-0.5 rounded">https://www.googleapis.com/auth/apps.licensing</code></li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Configuration Settings Form -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+        <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-3 flex items-center">
+            <i class="fa-solid fa-sliders mr-2 text-indigo-600"></i> License &amp; Workspace Configuration
+        </h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <!-- Delegated Admin Subject Email -->
+            <div class="md:col-span-2">
+                <label for="admin-email" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    Delegated Admin Email (DWD Impersonation Subject)
+                </label>
+                <input type="email" id="admin-email" value="{{ config.delegated_admin_email }}" placeholder="admin@domain.com" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500 bg-white">
+                <p class="text-xs text-slate-400 mt-1">A super admin or delegated admin user in your Google Workspace domain.</p>
+            </div>
+
+            <!-- Product ID -->
+            <div>
+                <label for="product-id" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    Product ID
+                </label>
+                <input type="text" id="product-id" value="{{ config.product_id }}" placeholder="Google-Apps" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-blue-500 focus:border-blue-500 bg-white">
+                <p class="text-xs text-slate-400 mt-1">Common values: <code class="text-blue-600">Google-Apps</code> or <code class="text-blue-600">101047</code></p>
+            </div>
+
+            <!-- SKU ID -->
+            <div>
+                <label for="sku-id" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    SKU ID
+                </label>
+                <input type="text" id="sku-id" value="{{ config.sku_id }}" placeholder="101031" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-blue-500 focus:border-blue-500 bg-white">
+                <p class="text-xs text-slate-400 mt-1">Gemini Enterprise: <code class="text-blue-600">1010470001</code> | Specified: <code class="text-blue-600">101031</code></p>
+            </div>
+        </div>
+
+        <!-- SKU Presets Helper -->
+        <div class="pt-2">
+            <p class="text-xs font-semibold text-slate-600 mb-2">Select SKU Preset:</p>
+            <div class="flex flex-wrap gap-2">
+                <button type="button" onclick="setSkuPreset('Google-Apps', '101031')" class="px-3 py-1.5 border border-slate-300 rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50 transition">
+                    Standard Preset (Google-Apps / 101031)
+                </button>
+                <button type="button" onclick="setSkuPreset('101047', '1010470001')" class="px-3 py-1.5 border border-slate-300 rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50 transition">
+                    Gemini Enterprise (101047 / 1010470001)
+                </button>
+                <button type="button" onclick="setSkuPreset('101047', '1010470003')" class="px-3 py-1.5 border border-slate-300 rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50 transition">
+                    Gemini Business (101047 / 1010470003)
+                </button>
+            </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex justify-end">
+            <button id="save-settings-btn" onclick="saveSettings()" class="inline-flex items-center px-5 py-2.5 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                <i class="fa-solid fa-floppy-disk mr-2"></i> Save Settings
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function setSkuPreset(prod, sku) {
+        document.getElementById('product-id').value = prod;
+        document.getElementById('sku-id').value = sku;
+        showToast(`Filled preset: Product=${prod}, SKU=${sku}`, 'info');
+    }
+
+    async function runDwdTest() {
+        const btn = document.getElementById('test-dwd-btn');
+        const box = document.getElementById('dwd-result-box');
+        const icon = document.getElementById('dwd-result-icon');
+        const msg = document.getElementById('dwd-result-msg');
+        const details = document.getElementById('dwd-result-details');
+        const guidance = document.getElementById('dwd-result-guidance');
+
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Testing...`;
+        box.classList.remove('hidden');
+        box.className = 'p-4 rounded-lg border text-sm bg-slate-50 border-slate-200 text-slate-700';
+        icon.className = 'fa-solid fa-spinner fa-spin text-blue-600';
+        msg.innerText = 'Connecting to Google Workspace Admin SDK Directory API...';
+        details.innerText = '';
+        guidance.classList.add('hidden');
+
+        try {
+            const adminEmail = document.getElementById('admin-email').value.trim();
+            const response = await fetch('/api/test-connection', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ delegated_admin_email: adminEmail })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                box.className = 'p-4 rounded-lg border text-sm bg-emerald-50 border-emerald-300 text-emerald-900';
+                icon.className = 'fa-solid fa-circle-check text-emerald-600';
+                msg.innerText = data.message;
+                details.innerText = `Impersonation Subject: ${data.subject} | Directory API OK`;
+                guidance.classList.add('hidden');
+                showToast('DWD connectivity test PASSED!', 'success');
+            } else {
+                box.className = 'p-4 rounded-lg border text-sm bg-rose-50 border-rose-300 text-rose-900';
+                icon.className = 'fa-solid fa-circle-xmark text-rose-600';
+                msg.innerText = data.message || 'DWD Connection Failed';
+                details.innerText = `Subject: ${data.subject || 'N/A'}`;
+                if (data.guidance) {
+                    guidance.classList.remove('hidden');
+                    guidance.className = 'text-xs mt-2 p-2.5 rounded bg-white border border-rose-200 text-rose-800';
+                    guidance.innerHTML = `<strong>Troubleshooting:</strong> ${data.guidance}`;
+                }
+                showToast('DWD connectivity test failed. Check diagnosis below.', 'error');
+            }
+        } catch (err) {
+            box.className = 'p-4 rounded-lg border text-sm bg-rose-50 border-rose-300 text-rose-900';
+            icon.className = 'fa-solid fa-triangle-exclamation text-rose-600';
+            msg.innerText = 'Network request error: ' + err.message;
+            guidance.classList.add('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    async function saveSettings() {
+        const btn = document.getElementById('save-settings-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Saving...`;
+
+        const payload = {
+            delegated_admin_email: document.getElementById('admin-email').value.trim(),
+            product_id: document.getElementById('product-id').value.trim(),
+            sku_id: document.getElementById('sku-id').value.trim(),
+        };
+
+        try {
+            const response = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                showToast('Settings saved to Firestore successfully.', 'success');
+            } else {
+                showToast(`Error saving settings: ${data.message || data.error}`, 'error');
+            }
+        } catch (err) {
+            showToast('Failed to save settings: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+</script>
+{% endblock %}

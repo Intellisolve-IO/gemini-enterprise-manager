@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block title %}Sync Execution History &bull; Gemini Provisioner{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Sync Execution History</h1>
+            <p class="text-sm text-slate-500 mt-1">
+                Historical audit logs and metrics for scheduled and manual Gemini license provisioning runs.
+            </p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <button onclick="window.location.reload()" class="inline-flex items-center px-3.5 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                <i class="fa-solid fa-arrows-rotate mr-2 text-slate-500"></i> Refresh
+            </button>
+            <button onclick="triggerManualSync()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                <i class="fa-solid fa-play mr-2"></i> Trigger Sync Now
+            </button>
+        </div>
+    </div>
+
+    <!-- History Table Card -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+                <thead class="bg-slate-50 text-slate-700 font-semibold text-xs uppercase tracking-wider">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left">Started (UTC)</th>
+                        <th scope="col" class="px-6 py-3 text-left">Trigger</th>
+                        <th scope="col" class="px-6 py-3 text-left">Status</th>
+                        <th scope="col" class="px-6 py-3 text-left">Evaluated</th>
+                        <th scope="col" class="px-6 py-3 text-left">Assigned</th>
+                        <th scope="col" class="px-6 py-3 text-left">Already Held</th>
+                        <th scope="col" class="px-6 py-3 text-left">Nested Groups / Errors</th>
+                        <th scope="col" class="px-6 py-3 text-left">Duration</th>
+                        <th scope="col" class="px-6 py-3 text-right">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-200 bg-white">
+                    {% for run in history %}
+                        <tr class="hover:bg-slate-50 transition">
+                            <td class="px-6 py-4 whitespace-nowrap font-mono text-xs text-slate-900">
+                                {{ run.started_at[:19] if run.started_at else '—' }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-xs text-slate-600 capitalize">
+                                {% if run.triggered_by == 'scheduled' %}
+                                    <span class="inline-flex items-center"><i class="fa-regular fa-clock text-slate-400 mr-1.5"></i> Scheduled</span>
+                                {% else %}
+                                    <span class="inline-flex items-center"><i class="fa-solid fa-user-gear text-blue-500 mr-1.5"></i> Admin UI</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold {% if run.status == 'SUCCESS' %}bg-emerald-100 text-emerald-800{% elif run.status == 'PARTIAL_SUCCESS' %}bg-amber-100 text-amber-800{% else %}bg-rose-100 text-rose-800{% endif %}">
+                                    {{ run.status }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap font-semibold text-slate-900">
+                                {{ run.evaluated_users_count | default(0) }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-emerald-700 font-bold">
+                                +{{ run.licenses_assigned_count | default(0) }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-slate-600">
+                                {{ run.licenses_already_held_count | default(0) }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {% if run.errors_count and run.errors_count > 0 %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                        <i class="fa-solid fa-triangle-exclamation mr-1 text-rose-500"></i> {{ run.errors_count }} ({{ run.nested_groups_count | default(0) }} nested)
+                                    </span>
+                                {% else %}
+                                    <span class="text-xs text-slate-400">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-xs text-slate-500 font-mono">
+                                {{ run.duration_seconds | default(0) }}s
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right">
+                                <button onclick="openDetailsModal({{ loop.index0 }})" class="text-xs font-medium text-blue-600 hover:text-blue-900">
+                                    View Log &rarr;
+                                </button>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="9" class="px-6 py-12 text-center text-slate-400">
+                                <i class="fa-solid fa-clock-rotate-left text-3xl mb-2 text-slate-300"></i>
+                                <p class="text-sm">No sync execution history found.</p>
+                                <p class="text-xs text-slate-400 mt-1">Runs are archived to Firestore upon completion.</p>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Details Modal -->
+<div id="details-modal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 class="text-lg font-bold text-slate-900" id="modal-title">Sync Run Details</h3>
+            <button onclick="closeDetailsModal()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+            <div class="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg font-mono">
+                <div><span class="text-slate-500">Product ID:</span> <span id="modal-product" class="font-bold"></span></div>
+                <div><span class="text-slate-500">SKU ID:</span> <span id="modal-sku" class="font-bold"></span></div>
+                <div><span class="text-slate-500">Status:</span> <span id="modal-status" class="font-bold"></span></div>
+                <div><span class="text-slate-500">Duration:</span> <span id="modal-duration"></span></div>
+            </div>
+
+            <div>
+                <p class="font-bold text-slate-700 mb-1">Monitored Groups Processed:</p>
+                <div id="modal-groups" class="p-2 rounded bg-slate-50 font-mono text-slate-600 space-y-1"></div>
+            </div>
+
+            <div>
+                <p class="font-bold text-slate-700 mb-1">Errors &amp; Skipped Items:</p>
+                <div id="modal-errors" class="max-h-56 overflow-y-auto p-2.5 rounded bg-slate-50 border border-slate-200 space-y-2 font-mono"></div>
+            </div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex justify-end">
+            <button onclick="closeDetailsModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const historyData = {{ history | tojson | safe }};
+
+    function openDetailsModal(index) {
+        const run = historyData[index];
+        if (!run) return;
+
+        document.getElementById('modal-title').innerText = `Run Record: ${run.started_at ? run.started_at.slice(0, 19) : 'N/A'}`;
+        document.getElementById('modal-product').innerText = run.product_id || '—';
+        document.getElementById('modal-sku').innerText = run.sku_id || '—';
+        document.getElementById('modal-status').innerText = run.status || '—';
+        document.getElementById('modal-duration').innerText = `${run.duration_seconds || 0}s`;
+
+        const groupsContainer = document.getElementById('modal-groups');
+        groupsContainer.innerHTML = '';
+        if (run.monitored_groups && run.monitored_groups.length > 0) {
+            run.monitored_groups.forEach(g => {
+                const item = document.createElement('div');
+                item.innerText = `• ${g}`;
+                groupsContainer.appendChild(item);
+            });
+        } else {
+            groupsContainer.innerHTML = '<span class="text-slate-400">None</span>';
+        }
+
+        const errorsContainer = document.getElementById('modal-errors');
+        errorsContainer.innerHTML = '';
+        if (run.errors && run.errors.length > 0) {
+            run.errors.forEach(err => {
+                const item = document.createElement('div');
+                item.className = 'p-2 rounded bg-white border border-rose-100 text-rose-700 text-[11px]';
+                item.innerHTML = `<span class="font-bold">[${err.type || 'ERROR'}]</span> ${err.error}`;
+                errorsContainer.appendChild(item);
+            });
+        } else {
+            errorsContainer.innerHTML = '<span class="text-emerald-600 font-sans">No errors or unsupported nested groups recorded during this run.</span>';
+        }
+
+        document.getElementById('details-modal').classList.remove('hidden');
+    }
+
+    function closeDetailsModal() {
+        document.getElementById('details-modal').classList.add('hidden');
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# setup_wif.sh
+# One-time setup script for Google Cloud Workload Identity Federation (WIF)
+# Allows GitHub Actions to deploy to GCP 'ge-hoffhouse' securely without keys.
+# ==============================================================================
+
+set -euo pipefail
+
+PROJECT_ID="ge-hoffhouse"
+POOL_NAME="github-actions-pool"
+PROVIDER_NAME="github-provider"
+SA_NAME="sa-gemini-provisioner"
+REGION="us-central1"
+
+echo "==================================================================="
+echo "Configuring Workload Identity Federation for GCP Project: ${PROJECT_ID}"
+echo "==================================================================="
+
+# 1. Ask for GitHub repo if not provided
+if [ -z "${1:-}" ]; then
+  read -rp "Enter your GitHub repository (format: owner/repo, e.g. david-hoff/gemini-license-provisioner): " GITHUB_REPO
+else
+  GITHUB_REPO="$1"
+fi
+
+if [ -z "$GITHUB_REPO" ]; then
+  echo "Error: GitHub repository cannot be empty."
+  exit 1
+fi
+
+echo ">> Enabling IAM, Cloud Resource Manager, and STS APIs..."
+gcloud services enable iam.googleapis.com \
+  iamcredentials.googleapis.com \
+  cloudresourcemanager.googleapis.com \
+  sts.googleapis.com \
+  --project="${PROJECT_ID}"
+
+# 2. Create Service Account if not exists
+SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+if ! gcloud iam service-accounts describe "${SA_EMAIL}" --project="${PROJECT_ID}" &>/dev/null; then
+  echo ">> Creating service account ${SA_NAME}..."
+  gcloud iam service-accounts create "${SA_NAME}" \
+    --display-name="Gemini License Provisioner Service Account" \
+    --project="${PROJECT_ID}"
+else
+  echo ">> Service account ${SA_EMAIL} already exists."
+fi
+
+# 3. Grant necessary GCP project roles
+echo ">> Granting project IAM roles to ${SA_EMAIL}..."
+ROLES=(
+  "roles/datastore.user"
+  "roles/cloudscheduler.admin"
+  "roles/run.admin"
+  "roles/iam.serviceAccountUser"
+  "roles/artifactregistry.admin"
+  "roles/logging.logWriter"
+)
+
+for role in "${ROLES[@]}"; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="${role}" \
+    --condition=None \
+    --quiet &>/dev/null || true
+done
+
+# 4. Create Workload Identity Pool
+if ! gcloud iam workload-identity-pools describe "${POOL_NAME}" --location="global" --project="${PROJECT_ID}" &>/dev/null; then
+  echo ">> Creating Workload Identity Pool '${POOL_NAME}'..."
+  gcloud iam workload-identity-pools create "${POOL_NAME}" \
+    --location="global" \
+    --display-name="GitHub Actions Pool" \
+    --project="${PROJECT_ID}"
+else
+  echo ">> Workload Identity Pool '${POOL_NAME}' already exists."
+fi
+
+# 5. Create Workload Identity Provider
+if ! gcloud iam workload-identity-pools providers describe "${PROVIDER_NAME}" \
+    --workload-identity-pool="${POOL_NAME}" \
+    --location="global" \
+    --project="${PROJECT_ID}" &>/dev/null; then
+  echo ">> Creating OIDC Provider for GitHub Actions..."
+  gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_NAME}" \
+    --workload-identity-pool="${POOL_NAME}" \
+    --location="global" \
+    --issuer-uri="https://token.actions.githubusercontent.com" \
+    --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+    --project="${PROJECT_ID}"
+else
+  echo ">> Workload Identity Provider '${PROVIDER_NAME}' already exists."
+fi
+
+# 6. Bind GitHub Repo to Service Account
+echo ">> Authorizing repository '${GITHUB_REPO}' to impersonate ${SA_EMAIL}..."
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+POOL_RESOURCE_ID="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_NAME}"
+PROVIDER_RESOURCE_ID="${POOL_RESOURCE_ID}/providers/${PROVIDER_NAME}"
+
+gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/${POOL_RESOURCE_ID}/attribute.repository/${GITHUB_REPO}" \
+  --project="${PROJECT_ID}" \
+  --quiet
+
+# 7. Print Service Account Unique Client ID for Google Workspace DWD
+SA_CLIENT_ID=$(gcloud iam service-accounts describe "${SA_EMAIL}" --project="${PROJECT_ID}" --format="value(uniqueId)")
+
+echo ""
+echo "==================================================================="
+echo " Workload Identity Federation Configured Successfully!"
+echo "==================================================================="
+echo ""
+echo "Configure these GitHub Secrets in your repository settings:"
+echo " (Settings > Secrets and variables > Actions > New repository secret)"
+echo ""
+echo " 1. WIF_PROVIDER:"
+echo "    ${PROVIDER_RESOURCE_ID}"
+echo ""
+echo " 2. WIF_SERVICE_ACCOUNT:"
+echo "    ${SA_EMAIL}"
+echo ""
+echo "-------------------------------------------------------------------"
+echo "Google Workspace Domain-Wide Delegation (DWD) Info:"
+echo " Service Account Unique Client ID:"
+echo "    ${SA_CLIENT_ID}"
+echo "==================================================================="

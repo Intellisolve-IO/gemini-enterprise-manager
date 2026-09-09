@@ -1,0 +1,16 @@
+# GCP Project and Region
+project_id = "ge-hoffhouse"
+region     = "us-central1"
+
+# Google Workspace Domain Settings
+delegated_admin_email = "admin@hoffhouse.com"
+
+# License Targeting (Google-Apps / 101031 or 101047 / 1010470001)
+product_id = "Google-Apps"
+sku_id     = "101031"
+
+# Cloud Scheduler Frequency (UTC)
+initial_cron_expression = "0 2 * * *"
+
+# GitHub Repository for WIF (e.g., "my-org/gemini-license-provisioner")
+github_repo = "david-hoff/gemini-license-provisioner"

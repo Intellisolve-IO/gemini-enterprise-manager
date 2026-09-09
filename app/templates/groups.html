@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Monitored Google Groups &bull; Gemini Provisioner{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Google Groups Selection</h1>
+            <p class="text-sm text-slate-500 mt-1">
+                Select the Google Groups whose direct members should automatically receive Gemini Enterprise licenses.
+            </p>
+        </div>
+        <div>
+            <button id="save-groups-btn" onclick="saveSelectedGroups()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                <i class="fa-solid fa-floppy-disk mr-2"></i> Save Monitored Groups
+            </button>
+        </div>
+    </div>
+
+    <!-- Alert / Notice Box -->
+    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg text-xs text-blue-900 flex items-start space-x-3">
+        <i class="fa-solid fa-circle-info text-blue-600 text-base mt-0.5"></i>
+        <div>
+            <strong class="font-semibold">Flat Membership Policy:</strong>
+            Only direct members of type <code class="bg-blue-100 text-blue-800 px-1 py-0.5 rounded">USER</code> are evaluated for license assignment. Nested groups (subgroups) are skipped and explicitly reported as errors in sync logs to keep the provisioner simple and predictable.
+        </div>
+    </div>
+
+    {% if error %}
+        <div class="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-lg text-sm text-rose-800 flex items-start space-x-3">
+            <i class="fa-solid fa-circle-exclamation text-rose-600 text-lg mt-0.5"></i>
+            <div>
+                <strong class="font-bold">Failed to load Google Groups from Workspace domain:</strong>
+                <p class="mt-1">{{ error }}</p>
+                <p class="mt-2">
+                    <a href="/settings" class="underline font-semibold text-rose-900 hover:text-rose-700">Go to Settings &rarr;</a> to test and configure your Domain-Wide Delegation credentials.
+                </p>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Search & Table Card -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div class="relative w-full sm:w-80">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400 text-sm"></i>
+                <input type="text" id="group-search" onkeyup="filterGroups()" placeholder="Search groups by name or email..." class="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white">
+            </div>
+            <div class="text-xs text-slate-500 font-medium self-end sm:self-center">
+                <span id="selected-counter">0</span> group(s) selected
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+                <thead class="bg-slate-50 text-slate-700 font-semibold text-xs uppercase tracking-wider">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left w-12">
+                            <input type="checkbox" id="select-all" onclick="toggleSelectAll(this)" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                        </th>
+                        <th scope="col" class="px-6 py-3 text-left">Group Name</th>
+                        <th scope="col" class="px-6 py-3 text-left">Email Address</th>
+                        <th scope="col" class="px-6 py-3 text-left">Members</th>
+                        <th scope="col" class="px-6 py-3 text-left">Description</th>
+                    </tr>
+                </thead>
+                <tbody id="groups-table-body" class="divide-y divide-slate-200 bg-white">
+                    {% for group in domain_groups %}
+                        {% set is_monitored = group.email in monitored_groups %}
+                        <tr class="hover:bg-slate-50 transition {% if is_monitored %}bg-blue-50/30{% endif %}">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <input type="checkbox" name="monitored_group_checkbox" value="{{ group.email }}" {% if is_monitored %}checked{% endif %} onchange="updateCounter()" class="group-checkbox h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap font-medium text-slate-900 group-name">
+                                {{ group.name }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap font-mono text-xs text-blue-600 group-email">
+                                {{ group.email }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-slate-500">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+                                    {{ group.directMembersCount }} direct
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-slate-500 text-xs truncate max-w-xs" title="{{ group.description }}">
+                                {{ group.description or "—" }}
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="5" class="px-6 py-12 text-center text-slate-400">
+                                <i class="fa-solid fa-circle-question text-3xl mb-2 text-slate-300"></i>
+                                <p class="text-sm">No Google Groups retrieved from domain.</p>
+                                <p class="text-xs text-slate-400 mt-1">Check DWD permissions in Settings.</p>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function updateCounter() {
+        const checked = document.querySelectorAll('.group-checkbox:checked').length;
+        document.getElementById('selected-counter').innerText = checked;
+    }
+
+    function toggleSelectAll(master) {
+        const checkboxes = document.querySelectorAll('.group-checkbox');
+        checkboxes.forEach(cb => {
+            const row = cb.closest('tr');
+            if (row.style.display !== 'none') {
+                cb.checked = master.checked;
+            }
+        });
+        updateCounter();
+    }
+
+    function filterGroups() {
+        const query = document.getElementById('group-search').value.toLowerCase();
+        const rows = document.querySelectorAll('#groups-table-body tr');
+        
+        rows.forEach(row => {
+            const nameEl = row.querySelector('.group-name');
+            const emailEl = row.querySelector('.group-email');
+            if (!nameEl || !emailEl) return;
+
+            const name = nameEl.innerText.toLowerCase();
+            const email = emailEl.innerText.toLowerCase();
+            
+            if (name.includes(query) || email.includes(query)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    async function saveSelectedGroups() {
+        const btn = document.getElementById('save-groups-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Saving...`;
+
+        const selected = Array.from(document.querySelectorAll('.group-checkbox:checked')).map(cb => cb.value);
+
+        try {
+            const response = await fetch('/api/groups', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ groups: selected })
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                showToast(`Saved ${selected.length} group(s) to monitor in Firestore.`, 'success');
+            } else {
+                showToast(`Failed to save: ${data.message || data.error}`, 'error');
+            }
+        } catch (err) {
+            showToast('Network error while saving groups: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    // Initialize counter on load
+    document.addEventListener('DOMContentLoaded', updateCounter);
+</script>
+{% endblock %}

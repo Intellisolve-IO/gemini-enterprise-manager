@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Sync Schedule &bull; Gemini Provisioner{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-4xl mx-auto">
+    <!-- Header -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Sync Schedule Configuration</h1>
+        <p class="text-sm text-slate-500 mt-1">
+            Configure how frequently Cloud Scheduler triggers the automated Gemini license synchronization engine.
+        </p>
+    </div>
+
+    <!-- Status Card -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h2 class="text-base font-bold text-slate-900 flex items-center">
+                <i class="fa-regular fa-calendar-check mr-2 text-emerald-600"></i> Cloud Scheduler Status
+            </h2>
+            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold {% if scheduler_status.available %}bg-emerald-100 text-emerald-800{% else %}bg-amber-100 text-amber-800{% endif %}">
+                {% if scheduler_status.available %}
+                    <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Active: {{ scheduler_status.job_name }}
+                {% else %}
+                    <span class="w-1.5 h-1.5 mr-1.5 bg-amber-500 rounded-full"></span> Unlinked / Offline
+                {% endif %}
+            </span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div class="bg-slate-50 p-4 rounded-lg">
+                <p class="text-xs text-slate-500">Current Trigger Cron</p>
+                <p class="text-lg font-mono font-bold text-slate-900 mt-1" id="current-cron-display">{{ config.cron_expression }}</p>
+            </div>
+            <div class="bg-slate-50 p-4 rounded-lg">
+                <p class="text-xs text-slate-500">Cloud Scheduler State</p>
+                <p class="text-base font-semibold text-slate-800 mt-1">{{ scheduler_status.state or "PENDING_DEPLOY" }}</p>
+            </div>
+            <div class="bg-slate-50 p-4 rounded-lg">
+                <p class="text-xs text-slate-500">Target Worker Endpoint</p>
+                <p class="text-xs font-mono text-blue-600 truncate mt-1">POST /api/sync/run</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Schedule Editor Form -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+        <div>
+            <h2 class="text-base font-bold text-slate-900">Adjust Frequency</h2>
+            <p class="text-xs text-slate-500 mt-1">Select a common preset or input a custom 5-field cron expression.</p>
+        </div>
+
+        <!-- Presets -->
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">Quick Presets</label>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <button type="button" onclick="setPreset('0 * * * *')" class="preset-btn px-4 py-3 border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg text-left transition">
+                    <p class="text-sm font-bold text-slate-800">Hourly</p>
+                    <p class="text-xs font-mono text-slate-500 mt-0.5">0 * * * *</p>
+                </button>
+                <button type="button" onclick="setPreset('0 */4 * * *')" class="preset-btn px-4 py-3 border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg text-left transition">
+                    <p class="text-sm font-bold text-slate-800">Every 4 Hours</p>
+                    <p class="text-xs font-mono text-slate-500 mt-0.5">0 */4 * * *</p>
+                </button>
+                <button type="button" onclick="setPreset('0 2 * * *')" class="preset-btn px-4 py-3 border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg text-left transition">
+                    <p class="text-sm font-bold text-slate-800">Daily (2 AM)</p>
+                    <p class="text-xs font-mono text-slate-500 mt-0.5">0 2 * * *</p>
+                </button>
+                <button type="button" onclick="setPreset('0 2 * * 1')" class="preset-btn px-4 py-3 border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg text-left transition">
+                    <p class="text-sm font-bold text-slate-800">Weekly (Mon)</p>
+                    <p class="text-xs font-mono text-slate-500 mt-0.5">0 2 * * 1</p>
+                </button>
+            </div>
+        </div>
+
+        <!-- Custom Cron Input -->
+        <div class="space-y-2">
+            <label for="cron-input" class="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                Cron Expression (minute hour day month day-of-week)
+            </label>
+            <div class="flex rounded-lg shadow-sm">
+                <span class="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-slate-300 bg-slate-50 text-slate-500 text-sm font-mono">
+                    cron:
+                </span>
+                <input type="text" id="cron-input" value="{{ config.cron_expression }}" placeholder="0 2 * * *" class="flex-1 min-w-0 block w-full px-3 py-2.5 rounded-none rounded-r-lg border border-slate-300 text-sm font-mono focus:ring-blue-500 focus:border-blue-500 bg-white">
+            </div>
+            <p class="text-xs text-slate-400">All times are evaluated in UTC timezone by Google Cloud Scheduler.</p>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex justify-end">
+            <button id="save-schedule-btn" onclick="saveSchedule()" class="inline-flex items-center px-5 py-2.5 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                <i class="fa-solid fa-cloud-arrow-up mr-2"></i> Update Cloud Scheduler &amp; Firestore
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function setPreset(cronVal) {
+        document.getElementById('cron-input').value = cronVal;
+    }
+
+    async function saveSchedule() {
+        const cronVal = document.getElementById('cron-input').value.trim();
+        if (!cronVal) {
+            showToast('Please enter a valid cron expression.', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('save-schedule-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Updating Scheduler...`;
+
+        try {
+            const response = await fetch('/api/schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cron_expression: cronVal })
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                document.getElementById('current-cron-display').innerText = cronVal;
+                showToast(data.message || 'Schedule updated successfully in Cloud Scheduler.', 'success');
+            } else {
+                showToast(`Update error: ${data.message || data.error}`, 'error');
+            }
+        } catch (err) {
+            showToast('Failed to update schedule: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+</script>
+{% endblock %}

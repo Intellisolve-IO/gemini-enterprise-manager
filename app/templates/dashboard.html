@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard &bull; Gemini Enterprise License Provisioner{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header with greeting & quick trigger -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Gemini License Provisioning Dashboard</h1>
+            <p class="text-sm text-slate-500 mt-1">
+                Automating Gemini Enterprise license assignment for Google Workspace users via Google Groups membership.
+            </p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <a href="/groups" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                <i class="fa-solid fa-layer-group mr-2 text-slate-500"></i> Manage Groups
+            </a>
+            <button onclick="triggerManualSync()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                <i class="fa-solid fa-play mr-2"></i> Trigger Sync Now
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <!-- Monitored Groups Count -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Monitored Groups</p>
+                <p class="text-2xl font-bold text-slate-900 mt-1">{{ config.monitored_groups | length }}</p>
+                <p class="text-xs text-blue-600 mt-1 hover:underline"><a href="/groups">Manage in directory &rarr;</a></p>
+            </div>
+            <div class="w-12 h-12 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
+                <i class="fa-solid fa-users"></i>
+            </div>
+        </div>
+
+        <!-- Target Product & SKU -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Target License SKU</p>
+                <p class="text-lg font-bold text-slate-900 mt-1 truncate" title="{{ config.sku_id }}">{{ config.sku_id }}</p>
+                <p class="text-xs text-slate-500 mt-1 truncate">Product: {{ config.product_id }}</p>
+            </div>
+            <div class="w-12 h-12 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl">
+                <i class="fa-solid fa-id-badge"></i>
+            </div>
+        </div>
+
+        <!-- Schedule Frequency -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Sync Schedule</p>
+                <p class="text-base font-bold font-mono text-slate-900 mt-1">{{ config.cron_expression }}</p>
+                <p class="text-xs text-emerald-600 mt-1 hover:underline"><a href="/schedule">Cloud Scheduler &rarr;</a></p>
+            </div>
+            <div class="w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
+                <i class="fa-regular fa-clock"></i>
+            </div>
+        </div>
+
+        <!-- Last Sync Run Status -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Last Execution</p>
+                {% if last_run %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold mt-1 {% if last_run.status == 'SUCCESS' %}bg-emerald-100 text-emerald-800{% elif last_run.status == 'PARTIAL_SUCCESS' %}bg-amber-100 text-amber-800{% else %}bg-rose-100 text-rose-800{% endif %}">
+                        {{ last_run.status }}
+                    </span>
+                    <p class="text-xs text-slate-500 mt-1 truncate" title="{{ last_run.completed_at }}">{{ last_run.completed_at[:19] }}</p>
+                {% else %}
+                    <p class="text-sm font-semibold text-slate-600 mt-1">No runs yet</p>
+                    <p class="text-xs text-slate-400 mt-1">Awaiting schedule or manual trigger</p>
+                {% endif %}
+            </div>
+            <div class="w-12 h-12 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center text-xl">
+                <i class="fa-solid fa-rotate"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main 2-Column Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Monitored Groups Detail (1 col) -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 class="text-base font-bold text-slate-900 flex items-center">
+                    <i class="fa-solid fa-list-check mr-2 text-blue-600"></i> Tracked Groups
+                </h2>
+                <a href="/groups" class="text-xs font-medium text-blue-600 hover:text-blue-800">Edit list</a>
+            </div>
+
+            {% if config.monitored_groups %}
+                <ul class="divide-y divide-slate-100 text-sm">
+                    {% for group in config.monitored_groups %}
+                        <li class="py-2.5 flex items-center justify-between">
+                            <div class="flex items-center space-x-2.5 truncate">
+                                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                                <span class="font-medium text-slate-800 truncate" title="{{ group }}">{{ group }}</span>
+                            </div>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <div class="text-center py-6 text-slate-400">
+                    <i class="fa-solid fa-users-slash text-3xl mb-2 text-slate-300"></i>
+                    <p class="text-sm">No Google Groups currently tracked.</p>
+                    <a href="/groups" class="inline-block mt-3 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md text-xs font-semibold hover:bg-blue-100 transition">
+                        Select groups to monitor
+                    </a>
+                </div>
+            {% endif %}
+
+            <div class="bg-amber-50 border-l-4 border-amber-400 p-3 rounded text-xs text-amber-800 leading-relaxed">
+                <i class="fa-solid fa-circle-info mr-1 text-amber-600"></i>
+                <strong>Flat Group Membership:</strong> Nested groups inside tracked groups are not supported and will be logged as skipped/errors during sync.
+            </div>
+        </div>
+
+        <!-- Latest Execution Stats (2 cols) -->
+        <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 class="text-base font-bold text-slate-900 flex items-center">
+                    <i class="fa-solid fa-bolt mr-2 text-amber-500"></i> Latest Execution Summary
+                </h2>
+                <a href="/history" class="text-xs font-medium text-blue-600 hover:text-blue-800">View complete history &rarr;</a>
+            </div>
+
+            {% if last_run %}
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 py-2">
+                    <div class="bg-slate-50 p-3 rounded-lg text-center">
+                        <p class="text-xs text-slate-500">Users Evaluated</p>
+                        <p class="text-xl font-bold text-slate-900 mt-0.5">{{ last_run.evaluated_users_count }}</p>
+                    </div>
+                    <div class="bg-emerald-50 p-3 rounded-lg text-center">
+                        <p class="text-xs text-emerald-700">Licenses Assigned</p>
+                        <p class="text-xl font-bold text-emerald-800 mt-0.5">+{{ last_run.licenses_assigned_count }}</p>
+                    </div>
+                    <div class="bg-blue-50 p-3 rounded-lg text-center">
+                        <p class="text-xs text-blue-700">Already Licensed</p>
+                        <p class="text-xl font-bold text-blue-800 mt-0.5">{{ last_run.licenses_already_held_count }}</p>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-lg text-center">
+                        <p class="text-xs text-slate-500">Duration</p>
+                        <p class="text-xl font-bold text-slate-900 mt-0.5">{{ last_run.duration_seconds }}s</p>
+                    </div>
+                </div>
+
+                {% if last_run.errors %}
+                    <div class="mt-4">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-rose-600 mb-2 flex items-center">
+                            <i class="fa-solid fa-triangle-exclamation mr-1.5"></i> Execution Warnings &amp; Errors ({{ last_run.errors | length }})
+                        </h3>
+                        <div class="max-h-48 overflow-y-auto space-y-1.5 text-xs bg-slate-50 p-3 rounded-lg border border-slate-200">
+                            {% for err in last_run.errors[:5] %}
+                                <div class="text-rose-700 flex items-start space-x-2">
+                                    <span class="font-mono bg-rose-100 text-rose-800 px-1 py-0.5 rounded text-[10px]">{{ err.type }}</span>
+                                    <span class="flex-1">{{ err.error }}</span>
+                                </div>
+                            {% endfor %}
+                            {% if last_run.errors | length > 5 %}
+                                <p class="text-slate-500 text-center pt-1">+ {{ (last_run.errors | length) - 5 }} more in <a href="/history" class="underline">full history</a></p>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endif %}
+            {% else %}
+                <div class="py-12 text-center text-slate-400">
+                    <p class="text-sm">No sync execution history recorded yet.</p>
+                    <p class="text-xs text-slate-400 mt-1">Configure your groups and click "Run Sync Now" above to initiate your first provisioning cycle.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
