@@ -73,9 +73,9 @@ async def dashboard_view(request: Request):
     last_run = history[0] if history else None
     
     return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
+        request=request,
+        name="dashboard.html",
+        context={
             "active_page": "dashboard",
             "config": config,
             "last_run": last_run
@@ -100,9 +100,9 @@ async def groups_view(request: Request):
         error_msg = str(e)
 
     return templates.TemplateResponse(
-        "groups.html",
-        {
-            "request": request,
+        request=request,
+        name="groups.html",
+        context={
             "active_page": "groups",
             "monitored_groups": monitored,
             "domain_groups": domain_groups,
@@ -119,9 +119,9 @@ async def schedule_view(request: Request):
     scheduler_status = scheduler_service.get_schedule()
 
     return templates.TemplateResponse(
-        "schedule.html",
-        {
-            "request": request,
+        request=request,
+        name="schedule.html",
+        context={
             "active_page": "schedule",
             "config": config,
             "scheduler_status": scheduler_status
@@ -134,9 +134,9 @@ async def settings_view(request: Request):
     """System settings and DWD connectivity test view."""
     config = get_config()
     return templates.TemplateResponse(
-        "settings.html",
-        {
-            "request": request,
+        request=request,
+        name="settings.html",
+        context={
             "active_page": "settings",
             "config": config
         }
@@ -148,9 +148,9 @@ async def history_view(request: Request):
     """Execution audit history view."""
     history = get_sync_history(limit=50)
     return templates.TemplateResponse(
-        "history.html",
-        {
-            "request": request,
+        request=request,
+        name="history.html",
+        context={
             "active_page": "history",
             "history": history
         }
