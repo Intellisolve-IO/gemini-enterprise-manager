@@ -1,0 +1,87 @@
+name: Deploy Gemini License Provisioner to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write # Required for requesting the JWT for Workload Identity Federation
+  contents: read  # Required for actions/checkout
+
+env:
+  PROJECT_ID: ge-hoffhouse
+  REGION: us-central1
+  SERVICE_NAME: gemini-license-provisioner
+  REPOSITORY: gemini-provisioner-docker
+  IMAGE_NAME: provisioner
+
+jobs:
+  deploy:
+    name: Build & Deploy to GCP Cloud Run
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker Authentication for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Container Image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}"
+          echo "Building container: ${IMAGE_URI}:${IMAGE_TAG}..."
+          
+          docker build \
+            -t "${IMAGE_URI}:${IMAGE_TAG}" \
+            -t "${IMAGE_URI}:latest" \
+            .
+            
+          echo "Pushing image to Artifact Registry..."
+          docker push "${IMAGE_URI}:${IMAGE_TAG}"
+          docker push "${IMAGE_URI}:latest"
+
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+          
+          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}'..."
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image "${IMAGE_URI}" \
+            --region ${{ env.REGION }} \
+            --service-account "${{ secrets.WIF_SERVICE_ACCOUNT }}" \
+            --timeout 600 \
+            --memory 1024Mi \
+            --cpu 1 \
+            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=gemini-license-sync-job" \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Output Service URL
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "=========================================================="
+          echo "Gemini License Provisioner Deployed Successfully!"
+          echo "Admin Dashboard URL: ${SERVICE_URL}"
+          echo "Sync Endpoint:       ${SERVICE_URL}/api/sync/run"
+          echo "=========================================================="
