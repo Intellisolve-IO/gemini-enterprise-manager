@@ -17,9 +17,9 @@ variable "service_name" {
 }
 
 variable "delegated_admin_email" {
-  description = "Google Workspace administrator email to impersonate via Domain-Wide Delegation."
+  description = "Real, active, licensed Google Workspace admin user to impersonate via Domain-Wide Delegation (e.g. workspace-admin@your-domain.com). Must resolve to an existing user or the sync fails with 'invalid_grant: Invalid email or User ID'."
   type        = string
-  default     = "admin@hoffhouse.com"
+  default     = "workspace-admin@your-domain.com"
 }
 
 variable "product_id" {
@@ -41,7 +41,7 @@ variable "initial_cron_expression" {
 }
 
 variable "github_repo" {
-  description = "GitHub repository in 'owner/repo' format for Workload Identity Federation (e.g. 'david-hoff/gemini-license-provisioner')."
+  description = "GitHub repository in 'owner/repo' format for Workload Identity Federation (e.g. 'my-org/gemini-license-provisioner')."
   type        = string
   default     = ""
 }
