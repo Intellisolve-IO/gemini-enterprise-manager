@@ -19,7 +19,8 @@ permissions:
 #   GCP_REGION         (optional) default us-central1
 #   CLOUD_RUN_SERVICE  (optional) default gemini-license-provisioner
 #   ARTIFACT_REPO      (optional) default gemini-provisioner-docker
-#   CLOUD_SCHEDULER_JOB(optional) default gemini-license-sync-job
+#   CLOUD_SCHEDULER_JOB(optional) default gemini-license-sync-job (the cron trigger)
+#   CLOUD_RUN_JOB      (optional) default gemini-license-sync-runner (job the schedule runs)
 #   DELEGATED_ADMIN_EMAIL (optional) delegated admin to impersonate; if unset,
 #                         configure it on the app's Settings page after deploy
 #   IAP_AUDIENCE          (optional) enables the in-app Workspace super-admin check
@@ -38,6 +39,7 @@ env:
   SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'gemini-license-provisioner' }}
   REPOSITORY: ${{ vars.ARTIFACT_REPO || 'gemini-provisioner-docker' }}
   SCHEDULER_JOB: ${{ vars.CLOUD_SCHEDULER_JOB || 'gemini-license-sync-job' }}
+  SYNC_JOB: ${{ vars.CLOUD_RUN_JOB || 'gemini-license-sync-runner' }}
   IMAGE_NAME: provisioner
 
 jobs:
@@ -134,11 +136,42 @@ jobs:
             ${AUTH_FLAG} ${IAP_FLAG} \
             --quiet
 
+      - name: Deploy the scheduled-sync Cloud Run Job
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          DELEGATED_ADMIN_EMAIL: ${{ vars.DELEGATED_ADMIN_EMAIL }}
+          NOTIFICATION_SENDER_EMAIL: ${{ vars.NOTIFICATION_SENDER_EMAIL }}
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+          LICENSE_CONFIG: ${{ vars.LICENSE_CONFIG }}
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+
+          # The job runs the sync worker directly (no HTTP, no IAP). It only needs
+          # the worker's env - not the IAP / auth settings the web service uses.
+          JOB_ENV_VARS="GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}"
+          [ -n "${DELEGATED_ADMIN_EMAIL}" ]     && JOB_ENV_VARS="${JOB_ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
+          [ -n "${NOTIFICATION_SENDER_EMAIL}" ] && JOB_ENV_VARS="${JOB_ENV_VARS},NOTIFICATION_SENDER_EMAIL=${NOTIFICATION_SENDER_EMAIL}"
+          [ -n "${PUBLIC_BASE_URL}" ]           && JOB_ENV_VARS="${JOB_ENV_VARS},PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
+          [ -n "${LICENSE_CONFIG}" ]            && JOB_ENV_VARS="${JOB_ENV_VARS},LICENSE_CONFIG=${LICENSE_CONFIG}"
+
+          echo "Deploying ${IMAGE_URI} to Cloud Run job '${{ env.SYNC_JOB }}'..."
+          gcloud run jobs deploy ${{ env.SYNC_JOB }} \
+            --image "${IMAGE_URI}" \
+            --region ${{ env.REGION }} \
+            --service-account "${{ secrets.WIF_SERVICE_ACCOUNT }}" \
+            --command python \
+            --args "-m,app.job_runner" \
+            --max-retries 0 \
+            --task-timeout 1800 \
+            --set-env-vars "${JOB_ENV_VARS}" \
+            --quiet
+
       - name: Output Service URL
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "=========================================================="
           echo "Gemini License Provisioner Deployed Successfully!"
           echo "Admin Dashboard URL: ${SERVICE_URL}"
-          echo "Sync Endpoint:       ${SERVICE_URL}/api/sync/run"
+          echo "Manual sync endpoint: ${SERVICE_URL}/api/sync/run  (dashboard button)"
+          echo "Scheduled sync:       Cloud Run job '${{ env.SYNC_JOB }}' (Cloud Scheduler '${{ env.SCHEDULER_JOB }}')"
           echo "=========================================================="

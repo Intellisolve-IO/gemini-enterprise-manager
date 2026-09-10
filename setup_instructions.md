@@ -20,7 +20,8 @@ export REGION="us-central1"                        # region for Cloud Run / Arti
 export SA_NAME="sa-gemini-provisioner"             # name for the app + CI/CD service account (created below)
 export ARTIFACT_REPO="gemini-provisioner-docker"   # Artifact Registry repository name
 export SERVICE_NAME="gemini-license-provisioner"   # Cloud Run service name
-export SCHEDULER_JOB="gemini-license-sync-job"     # Cloud Scheduler job name
+export SCHEDULER_JOB="gemini-license-sync-job"     # Cloud Scheduler job (the cron trigger)
+export SYNC_JOB="gemini-license-sync-runner"       # Cloud Run job the schedule executes
 
 # ── GitHub ────────────────────────────────────────────────────────────────────
 export GITHUB_REPO="your-org/your-repo"            # repo that hosts this code (used by WIF)
@@ -245,11 +246,12 @@ workflow reads these so nothing environment-specific is committed:
 | `CLOUD_RUN_SERVICE` | `${SERVICE_NAME}` | `gemini-license-provisioner` |
 | `ARTIFACT_REPO` | `${ARTIFACT_REPO}` | `gemini-provisioner-docker` |
 | `CLOUD_SCHEDULER_JOB` | `${SCHEDULER_JOB}` | `gemini-license-sync-job` |
+| `CLOUD_RUN_JOB` | `${SYNC_JOB}` | `gemini-license-sync-runner` |
 | `DELEGATED_ADMIN_EMAIL` | `${DELEGATED_ADMIN_EMAIL}` | *(unset — set it on the Settings page instead)* |
 
 The workflow also forwards these optional variables when set:
-`NOTIFICATION_SENDER_EMAIL`, `PUBLIC_BASE_URL` (Step 8) and `IAP_AUDIENCE`,
-`SYNC_INVOKER_SA_EMAIL`, `AUTH_BOOTSTRAP_ADMINS`, `SUPER_ADMIN_CACHE_TTL`,
+`NOTIFICATION_SENDER_EMAIL`, `PUBLIC_BASE_URL` (Step 8), `LICENSE_CONFIG`, and
+`IAP_AUDIENCE`, `SYNC_INVOKER_SA_EMAIL`, `AUTH_BOOTSTRAP_ADMINS`, `SUPER_ADMIN_CACHE_TTL`,
 `CLOUD_RUN_ENABLE_IAP`, `CLOUD_RUN_ALLOW_UNAUTH` (Security Model). Full list and meanings:
 [README → Configuration reference](README.md#configuration-reference).
 
@@ -264,7 +266,10 @@ git push origin main
 ```
 
 Pushing to `main` runs `.github/workflows/deploy.yml`: build the image, push it to
-Artifact Registry, and deploy to Cloud Run.
+Artifact Registry, deploy the Cloud Run **service** (admin UI + manual sync endpoint),
+and deploy the Cloud Run **job** `${SYNC_JOB}` (`python -m app.job_runner`) that
+Cloud Scheduler runs on a cron. See [Scheduled Sync](#scheduled-sync) for the one-time
+scheduler wiring.
 
 ---
 
@@ -277,8 +282,46 @@ Artifact Registry, and deploy to Cloud Run.
      from the project's Discovery Engine license configs) and **Save**.
    - Click **Test Connection**.
 3. **Monitored Groups**: select the Google Groups to track, then **Save**.
-4. **Sync Schedule**: confirm/adjust the cron frequency, then **Update Cloud Scheduler**.
+4. **Sync Schedule**: confirm/adjust the cron frequency, then **Update Cloud Scheduler**
+   (this edits only the cron string on the `${SCHEDULER_JOB}` trigger).
 5. Click **Run Sync Now** for the first provisioning cycle.
+
+---
+
+## Scheduled Sync
+
+Scheduled runs execute as a **Cloud Run job** (`${SYNC_JOB}`), triggered by the
+**Cloud Scheduler** job `${SCHEDULER_JOB}` through the Cloud Run Admin API. This path
+does not touch the web service or IAP, so it works whether or not IAP is enabled and
+needs no OAuth client.
+
+CI (and Terraform) create/update the job image automatically. The **scheduler → job**
+wiring is one-time. With Terraform it is handled by `terraform apply`. By hand:
+
+```bash
+SCHED_SA="sa-scheduler-invoker@${PROJECT_ID}.iam.gserviceaccount.com"   # create if absent
+
+# 1. Let the scheduler SA execute the job (nothing else)
+gcloud run jobs add-iam-policy-binding "${SYNC_JOB}" \
+  --region="${REGION}" --project="${PROJECT_ID}" \
+  --member="serviceAccount:${SCHED_SA}" --role="roles/run.invoker"
+
+# 2. Point the Cloud Scheduler job at the job's :run endpoint (OAuth, not OIDC)
+gcloud scheduler jobs update http "${SCHEDULER_JOB}" \
+  --location="${REGION}" --project="${PROJECT_ID}" \
+  --http-method=POST \
+  --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${SYNC_JOB}:run" \
+  --oauth-service-account-email="${SCHED_SA}" \
+  --update-headers="Content-Type=application/json" \
+  --clear-body
+# If the job previously used an OIDC token, recreate it instead: `gcloud scheduler
+# jobs delete ${SCHEDULER_JOB} --location=${REGION}` then `create http ...` with the
+# flags above.
+
+# 3. Verify
+gcloud scheduler jobs run "${SCHEDULER_JOB}" --location="${REGION}" --project="${PROJECT_ID}"
+gcloud run jobs executions list --job="${SYNC_JOB}" --region="${REGION}" --project="${PROJECT_ID}"
+```
 
 ---
 
@@ -320,9 +363,13 @@ Access control has two layers, both required once enabled:
    DWD client used for provisioning) to confirm the user is an **`isAdmin`, non-suspended
    Google Workspace super administrator**. Anyone else gets `403`.
 
-`POST /api/sync/run` additionally accepts the Cloud Scheduler service account
-(`SYNC_INVOKER_SA_EMAIL`) so scheduled runs work. `GET /healthz` is always open (Cloud
-Run probes). DWD credentials are never exposed to the browser.
+Scheduled runs do **not** go through IAP or the web service — Cloud Scheduler executes
+the `${SYNC_JOB}` Cloud Run job directly (see [Scheduled Sync](#scheduled-sync)), so
+enabling IAP never breaks the schedule. `POST /api/sync/run` still powers the dashboard's
+manual **Run Sync Now** button (authorized by IAP + super-admin), and optionally accepts
+a named service account via `SYNC_INVOKER_SA_EMAIL` if you want a second HTTP trigger.
+`GET /healthz` is always open (Cloud Run probes). DWD credentials are never exposed to
+the browser.
 
 **Enforcement is off until `IAP_AUDIENCE` is set** — until then every page and API is
 public (`--allow-unauthenticated` + `allUsers` invoker), which is fine only for a first
@@ -331,18 +378,17 @@ smoke test. Turn it on:
 ### With Terraform
 
 ```hcl
-enable_iap          = true
-iap_audience        = "<the IAP JWT aud - see step 4 below>"
-iap_oauth_client_id = "<client-id>.apps.googleusercontent.com"   # for scheduled runs
-# iap_members       = ["group:workspace-admins@your-domain.com"] # optional; default is the whole domain
+enable_iap   = true
+iap_audience = "<the IAP JWT aud - see step 4 below>"
+# iap_members = ["group:workspace-admins@your-domain.com"] # optional; default is the whole domain
 ```
 
 `terraform apply` enables IAP on the Cloud Run service, drops the `allUsers` invoker,
 grants the IAP service agent `run.invoker`, grants `iap.httpsResourceAccessor` to
-`iap_members` and the scheduler SA, sets `IAP_AUDIENCE` / `SYNC_INVOKER_SA_EMAIL`, and
-points the scheduler's OIDC token at the IAP client. You still create the OAuth consent
-screen (brand) once in the console if the project has none, and you still need the
-audience from step 4.
+`iap_members`, and sets `IAP_AUDIENCE`. The scheduled sync is unaffected — it runs the
+Cloud Run job, not the IAP-protected service. You still create the OAuth consent screen
+(brand) once in the console if the project has none, and you still need the audience
+from step 4.
 
 ### By hand (console + gcloud + CI)
 
@@ -352,14 +398,11 @@ audience from step 4.
    **Identity-Aware Proxy** on (accept the prompt to grant the IAP service agent the
    invoker role). Equivalent CLI: `gcloud run deploy ${SERVICE_NAME} --iap ...` (needs a
    recent gcloud) or set repository variable `CLOUD_RUN_ENABLE_IAP=true` and redeploy.
-3. **Grant access through IAP**:
+3. **Grant access through IAP** (browser users only — the scheduler doesn't use IAP):
    ```bash
    gcloud iap web add-iam-policy-binding --resource-type=cloud-run \
      --service=${SERVICE_NAME} --region=${REGION} --project=${PROJECT_ID} \
      --member="domain:${WORKSPACE_DOMAIN}" --role="roles/iap.httpsResourceAccessor"
-   gcloud iap web add-iam-policy-binding --resource-type=cloud-run \
-     --service=${SERVICE_NAME} --region=${REGION} --project=${PROJECT_ID} \
-     --member="serviceAccount:<scheduler-sa>" --role="roles/iap.httpsResourceAccessor"
    ```
    Use a `group:` instead of `domain:` to narrow it — the app still enforces super-admin
    on top.
@@ -376,12 +419,10 @@ audience from step 4.
    | :--- | :--- |
    | `CLOUD_RUN_ENABLE_IAP` | `true` |
    | `IAP_AUDIENCE` | the audience from step 4 |
-   | `SYNC_INVOKER_SA_EMAIL` | the Cloud Scheduler service account email |
    | `AUTH_BOOTSTRAP_ADMINS` | your own admin email (break-glass, recommended) |
    | `CLOUD_RUN_ALLOW_UNAUTH` | `false` |
-6. **Repoint the scheduler** OIDC token audience to the IAP OAuth client ID
-   (`gcloud scheduler jobs update http ${SCHEDULER_JOB} --location=${REGION} --oidc-token-audience=<client-id>.apps.googleusercontent.com --oidc-service-account-email=<scheduler-sa>`).
-7. Redeploy (push to `main`).
+6. Redeploy (push to `main`). The scheduled sync needs no changes — it runs the
+   Cloud Run job, not the IAP-protected service.
 
 ### Optional knobs
 

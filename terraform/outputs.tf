@@ -14,8 +14,13 @@ output "app_service_account_client_id" {
 }
 
 output "scheduler_job_name" {
-  description = "The Cloud Scheduler job name."
+  description = "The Cloud Scheduler job name (the cron trigger)."
   value       = google_cloud_scheduler_job.sync_job.name
+}
+
+output "sync_job_name" {
+  description = "The Cloud Run Job that runs the scheduled license sync."
+  value       = google_cloud_run_v2_job.sync_runner.name
 }
 
 output "artifact_registry_repo" {

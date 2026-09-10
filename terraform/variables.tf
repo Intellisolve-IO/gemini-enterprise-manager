@@ -45,6 +45,12 @@ variable "scheduler_job_name" {
   default     = "gemini-license-sync-job"
 }
 
+variable "sync_job_name" {
+  description = "Name of the Cloud Run Job that performs the scheduled license sync (invoked by the scheduler job)."
+  type        = string
+  default     = "gemini-license-sync-runner"
+}
+
 variable "delegated_admin_email" {
   description = "Real, active, licensed Google Workspace admin user to impersonate via Domain-Wide Delegation (e.g. workspace-admin@your-domain.com). Must resolve to an existing user or the sync fails with 'invalid_grant: Invalid email or User ID'."
   type        = string
@@ -67,12 +73,6 @@ variable "iap_members" {
   description = "IAM members allowed through IAP (roles/iap.httpsResourceAccessor). Empty = ['domain:<domain of delegated_admin_email>']. The app still restricts access to super admins."
   type        = list(string)
   default     = []
-}
-
-variable "iap_oauth_client_id" {
-  description = "IAP OAuth 2.0 client ID (…apps.googleusercontent.com). Used as the Cloud Scheduler OIDC audience so scheduled sync runs pass through IAP. Required when enable_iap = true for scheduled runs to work."
-  type        = string
-  default     = ""
 }
 
 variable "notification_sender_email" {

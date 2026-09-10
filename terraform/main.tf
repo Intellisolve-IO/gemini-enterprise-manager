@@ -41,7 +41,7 @@ locals {
 }
 
 resource "google_project_service" "apis" {
-  for_each                   = toset(locals.services)
+  for_each                   = toset(local.services)
   project                    = var.project_id
   service                    = each.key
   disable_on_destroy         = false
@@ -114,7 +114,7 @@ resource "google_service_account_iam_member" "sa_token_creator_self" {
 resource "google_service_account" "scheduler_sa" {
   account_id   = var.scheduler_service_account_id
   display_name = "Cloud Scheduler Invoker Service Account"
-  description  = "Used by Cloud Scheduler to invoke the /api/sync/run endpoint with OIDC auth"
+  description  = "Used by Cloud Scheduler to execute the license-sync Cloud Run Job via the Cloud Run Admin API"
 }
 
 # -----------------------------------------------------------------------------
@@ -224,14 +224,6 @@ resource "google_cloud_run_v2_service" "provisioner" {
   }
 }
 
-# Allow Scheduler SA to invoke Cloud Run
-resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
-  location = google_cloud_run_v2_service.provisioner.location
-  name     = google_cloud_run_v2_service.provisioner.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.scheduler_sa.email}"
-}
-
 # Public invoker binding - ONLY when IAP is disabled. With enable_iap = true this
 # is dropped and the IAP service agent (below) is the sole run.invoker.
 # WARNING (enable_iap = false): the admin UI and every /api/* endpoint are then
@@ -268,44 +260,108 @@ resource "google_iap_web_cloud_run_service_iam_member" "accessors" {
   member                = each.value
 }
 
-# Cloud Scheduler's SA must also be allowed through IAP to reach /api/sync/run.
-resource "google_iap_web_cloud_run_service_iam_member" "scheduler_accessor" {
-  count                 = var.enable_iap ? 1 : 0
-  project               = var.project_id
-  location              = var.region
-  cloud_run_service_name = google_cloud_run_v2_service.provisioner.name
-  role                  = "roles/iap.httpsResourceAccessor"
-  member                = "serviceAccount:${google_service_account.scheduler_sa.email}"
+# -----------------------------------------------------------------------------
+# 5. Scheduled license sync: a Cloud Run Job triggered by Cloud Scheduler
+# -----------------------------------------------------------------------------
+# The scheduled run executes as a Cloud Run *Job* (the same image, command
+# `python -m app.job_runner`), triggered by Cloud Scheduler through the Cloud
+# Run Admin API. This path never hits the IAP-protected HTTP service, so
+# scheduled runs work whether or not IAP is enabled - no IAP OAuth client and
+# no `SYNC_INVOKER_SA_EMAIL` allow-list are needed. The web service keeps
+# `POST /api/sync/run` for the dashboard's manual "Run sync now" button.
+resource "google_cloud_run_v2_job" "sync_runner" {
+  depends_on = [
+    google_project_service.apis,
+    google_project_iam_member.sa_firestore,
+    google_service_account_iam_member.sa_token_creator_self,
+  ]
+  name     = var.sync_job_name
+  location = var.region
+
+  template {
+    template {
+      service_account = google_service_account.app_sa.email
+      timeout         = "1800s"
+      max_retries     = 0 # Cloud Scheduler retries the trigger; don't double up
+
+      containers {
+        image   = var.container_image
+        command = ["python", "-m", "app.job_runner"]
+
+        resources {
+          limits = {
+            cpu    = "1000m"
+            memory = "1024Mi"
+          }
+        }
+
+        env {
+          name  = "GCP_PROJECT_ID"
+          value = var.project_id
+        }
+        env {
+          name  = "GCP_REGION"
+          value = var.region
+        }
+        env {
+          name  = "DELEGATED_ADMIN_EMAIL"
+          value = var.delegated_admin_email
+        }
+        env {
+          name  = "RUNTIME_SERVICE_ACCOUNT_EMAIL"
+          value = google_service_account.app_sa.email
+        }
+        env {
+          name  = "NOTIFICATION_SENDER_EMAIL"
+          value = var.notification_sender_email
+        }
+        env {
+          name  = "PUBLIC_BASE_URL"
+          value = var.public_base_url
+        }
+        env {
+          name  = "LICENSE_CONFIG"
+          value = var.license_config
+        }
+      }
+    }
+  }
+
+  # CI redeploys the job image on each release; ignore drift on the image here.
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
 }
 
-# -----------------------------------------------------------------------------
-# 5. Cloud Scheduler Job
-# -----------------------------------------------------------------------------
+# Cloud Scheduler's SA may execute (run) the job, nothing more.
+resource "google_cloud_run_v2_job_iam_member" "scheduler_runs_job" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.sync_runner.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_sa.email}"
+}
+
 resource "google_cloud_scheduler_job" "sync_job" {
-  depends_on  = [google_project_service.apis, google_cloud_run_v2_service.provisioner]
+  depends_on  = [google_project_service.apis, google_cloud_run_v2_job.sync_runner]
   name        = var.scheduler_job_name
-  description = "Triggers Google Workspace Gemini license provisioning based on Google Groups"
+  description = "Runs the Gemini Enterprise license-sync Cloud Run Job on a cron schedule"
   schedule    = var.initial_cron_expression
   time_zone   = "UTC"
   region      = var.region
 
+  # Trigger the Cloud Run Job via the Admin API. Target is a *.googleapis.com
+  # endpoint, so it authenticates with an OAuth access token (not an OIDC token).
   http_target {
     http_method = "POST"
-    uri         = "${google_cloud_run_v2_service.provisioner.uri}/api/sync/run"
+    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.sync_runner.name}:run"
 
     headers = {
       "Content-Type" = "application/json"
     }
 
-    body = base64encode(jsonencode({
-      "triggered_by" = "scheduled"
-    }))
-
-    # With IAP on, the OIDC token must be minted for the IAP OAuth client ID so
-    # IAP accepts it; otherwise it targets the Cloud Run URL directly.
-    oidc_token {
+    oauth_token {
       service_account_email = google_service_account.scheduler_sa.email
-      audience              = var.enable_iap && var.iap_oauth_client_id != "" ? var.iap_oauth_client_id : google_cloud_run_v2_service.provisioner.uri
     }
   }
 }

@@ -75,9 +75,8 @@ Delegated admin impersonated at runtime: `ws-provisioner@acme.example`.
 Terraform:
 
 ```hcl
-enable_iap          = true
-iap_audience        = "/projects/750123456789/locations/us-central1/services/gemini-license-provisioner"
-iap_oauth_client_id = "750123456789-abc123def456.apps.googleusercontent.com"
+enable_iap   = true
+iap_audience = "/projects/750123456789/locations/us-central1/services/gemini-license-provisioner"
 # iap_members defaults to ["domain:acme.example"]
 ```
 
@@ -87,9 +86,9 @@ Or, with IAP enabled from the console, repository variables:
 | :--- | :--- |
 | `CLOUD_RUN_ENABLE_IAP` | `true` |
 | `IAP_AUDIENCE` | the IAP JWT `aud` (see [Security Model](setup_instructions.md#security-model)) |
-| `SYNC_INVOKER_SA_EMAIL` | `sa-scheduler-invoker@acme-licensing-prod.iam.gserviceaccount.com` |
 | `AUTH_BOOTSTRAP_ADMINS` | `ws-provisioner@acme.example` (break-glass) |
 | `CLOUD_RUN_ALLOW_UNAUTH` | `false` |
 
 Result: only active `isAdmin` users on `acme.example` can open the app; anyone else IAP
-lets through gets `403` from the app.
+lets through gets `403` from the app. The scheduled sync runs the `gemini-license-sync-runner`
+Cloud Run job and is unaffected by IAP.
