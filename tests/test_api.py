@@ -6,8 +6,36 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastapi.testclient import TestClient
 from app.main import app
+from app.config import settings
 
 client = TestClient(app)
+
+
+def test_iap_enforced_blocks_unauthenticated(monkeypatch):
+    """With IAP_AUDIENCE set, pages and mutating APIs require an IAP assertion."""
+    monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
+    assert client.get("/").status_code == 401
+    assert client.post("/api/settings", json={
+        "delegated_admin_email": "a@b.com", "product_id": "x", "sku_id": "y"
+    }).status_code == 401
+    # health probe stays open for Cloud Run
+    assert client.get("/healthz").status_code == 200
+
+
+def test_iap_enforced_allows_super_admin(monkeypatch):
+    monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
+    monkeypatch.setattr("app.auth._verify_iap_assertion", lambda a: {"email": "boss@example.com"})
+    monkeypatch.setattr("app.auth.is_super_admin", lambda e: True)
+    mock_config = {
+        "monitored_groups": [], "product_id": "Google-Apps", "sku_id": "101031",
+        "delegated_admin_email": "admin@example.com", "cron_expression": "0 2 * * *",
+        "notification_emails": [], "notify_on": "failures",
+    }
+    with patch("app.main.get_config", return_value=mock_config), \
+         patch("app.main.get_sync_history", return_value=[]):
+        r = client.get("/", headers={"x-goog-iap-jwt-assertion": "tok"})
+        assert r.status_code == 200
+        assert "boss@example.com" in r.text
 
 
 def test_healthz():
@@ -60,6 +88,61 @@ def test_api_save_settings():
         )
         assert response.status_code == 200
         assert response.json()["success"] is True
+
+
+def test_schedule_view_renders_notification_settings():
+    """The Sync Schedule page shows saved notification recipients + mode."""
+    mock_config = {
+        "monitored_groups": [],
+        "product_id": "Google-Apps",
+        "sku_id": "101031",
+        "delegated_admin_email": "admin@example.com",
+        "cron_expression": "0 2 * * *",
+        "notification_emails": ["ops@example.com"],
+        "notify_on": "all",
+    }
+    sched_status = {"available": False, "job_name": "job", "schedule": None, "time_zone": "UTC"}
+    with patch("app.main.get_config", return_value=mock_config), \
+         patch("app.main.SchedulerService") as MockSched:
+        MockSched.return_value.get_schedule.return_value = sched_status
+        response = client.get("/schedule")
+        assert response.status_code == 200
+        assert "Run Notifications" in response.text
+        assert "ops@example.com" in response.text
+        assert "checkbox" in response.text and "notify-all" in response.text
+
+
+def test_api_save_notifications_valid():
+    """Save notification recipients + mode via API."""
+    with patch("app.main.update_config", return_value={
+        "notification_emails": ["ops@example.com", "sre@example.com"],
+        "notify_on": "all",
+    }):
+        response = client.post(
+            "/api/notifications",
+            json={"notification_emails": "ops@example.com, sre@example.com", "notify_on": "all"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["notify_on"] == "all"
+        assert "ops@example.com" in data["notification_emails"]
+
+
+def test_api_save_notifications_rejects_bad_email():
+    response = client.post(
+        "/api/notifications",
+        json={"notification_emails": ["not-an-email"], "notify_on": "failures"},
+    )
+    assert response.status_code == 400
+
+
+def test_api_save_notifications_rejects_bad_mode():
+    response = client.post(
+        "/api/notifications",
+        json={"notification_emails": [], "notify_on": "sometimes"},
+    )
+    assert response.status_code == 400
 
 
 def test_api_test_connection():

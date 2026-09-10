@@ -21,4 +21,6 @@ USER appuser
 # Cloud Run injects PORT environment variable (defaults to 8080)
 EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# --proxy-headers so request.base_url reflects the https:// URL behind Cloud Run's
+# front-end proxy (used to build links in notification emails).
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]

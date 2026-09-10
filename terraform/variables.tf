@@ -51,6 +51,42 @@ variable "delegated_admin_email" {
   default     = "workspace-admin@your-domain.com"
 }
 
+variable "enable_iap" {
+  description = "Put Identity-Aware Proxy in front of Cloud Run. The app then also requires the IAP user to be a Google Workspace super admin (set iap_audience too)."
+  type        = bool
+  default     = false
+}
+
+variable "iap_audience" {
+  description = "Expected 'aud' of the IAP JWT, e.g. /projects/<PROJECT_NUMBER>/global/backendServices/<ID>. Required when enable_iap = true. Get it from the IAP console or `gcloud iap`."
+  type        = string
+  default     = ""
+}
+
+variable "iap_members" {
+  description = "IAM members allowed through IAP (roles/iap.httpsResourceAccessor). Empty = ['domain:<domain of delegated_admin_email>']. The app still restricts access to super admins."
+  type        = list(string)
+  default     = []
+}
+
+variable "iap_oauth_client_id" {
+  description = "IAP OAuth 2.0 client ID (…apps.googleusercontent.com). Used as the Cloud Scheduler OIDC audience so scheduled sync runs pass through IAP. Required when enable_iap = true for scheduled runs to work."
+  type        = string
+  default     = ""
+}
+
+variable "notification_sender_email" {
+  description = "Mailbox to send sync-run notification emails as (Gmail API + DWD). Empty = use delegated_admin_email. Requires the gmail.send scope on the DWD entry."
+  type        = string
+  default     = ""
+}
+
+variable "public_base_url" {
+  description = "Public https base URL of the service, used for links in notification emails. Empty = the app learns it from web traffic."
+  type        = string
+  default     = ""
+}
+
 variable "product_id" {
   description = "Google Workspace Product ID for license assignment (e.g. Google-Apps or 101047)."
   type        = string

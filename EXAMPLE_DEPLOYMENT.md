@@ -50,7 +50,9 @@ Domain-wide delegation → Add new:
 | Field | Value |
 | :--- | :--- |
 | Client ID | `112103280116941655961` (the service account's numeric `uniqueId`) |
-| OAuth scopes | `https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing` |
+| OAuth scopes | `https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing,https://www.googleapis.com/auth/gmail.send` |
+
+(`gmail.send` is only needed for run-notification emails.)
 
 Delegated admin impersonated at runtime: `david@hoffshouse.com` (active super admin).
 
@@ -63,6 +65,24 @@ Delegated admin impersonated at runtime: `david@hoffshouse.com` (active super ad
   `artifactregistry.admin`, `iam.serviceAccountUser`, and
   `iam.serviceAccountTokenCreator` on itself.
 
-> Access is currently public (`--allow-unauthenticated`). See
-> [setup_instructions.md → Security Model](setup_instructions.md#security-model)
-> before treating this as production.
+## Locking it down (IAP + super-admin)
+
+Terraform:
+
+```hcl
+enable_iap          = true
+iap_audience        = "/projects/1016465712043/global/backendServices/<BACKEND_ID>"
+iap_oauth_client_id = "<client-id>.apps.googleusercontent.com"
+# iap_members defaults to ["domain:hoffshouse.com"]
+```
+
+Or repository variables (with IAP enabled in the console):
+
+| Variable | Value |
+| :--- | :--- |
+| `IAP_AUDIENCE` | `/projects/1016465712043/global/backendServices/<BACKEND_ID>` |
+| `SYNC_INVOKER_SA_EMAIL` | `sa-scheduler-invoker@ge-hoffhouse.iam.gserviceaccount.com` |
+| `CLOUD_RUN_ALLOW_UNAUTH` | `false` |
+
+Then only active `isAdmin` users on `hoffshouse.com` (e.g. `david@hoffshouse.com`) can
+open the app; everyone else IAP lets in gets `403` from the app.

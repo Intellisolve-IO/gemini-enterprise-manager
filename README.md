@@ -50,6 +50,10 @@ An automated, serverless solution on Google Cloud Platform that manages and prov
    - Server-rendered Jinja2 templates styled with Tailwind CSS via CDN. No Node.js, npm, or webpack pipeline needed.
 4. **Keyless GitHub Actions Deployment**:
    - Uses Workload Identity Federation (WIF) — no long-lived service account keys stored in GitHub Secrets.
+5. **Run Notifications**:
+   - Optional post-run email (Gmail API via DWD) with full run detail and a link back to Run History; choose "all runs" or "failures only" on the Sync Schedule page.
+6. **Super-admin-only access (optional)**:
+   - Behind Identity-Aware Proxy, the app checks the IAP-asserted user is a Google Workspace super administrator before serving any page or mutating API.
 
 ---
 
@@ -73,8 +77,10 @@ gemini-license-provisioner/
 │   ├── __init__.py
 │   ├── main.py                     # FastAPI routes (UI + POST /api/sync/run)
 │   ├── config.py                   # Environment & runtime settings
+│   ├── auth.py                     # IAP JWT verification + Workspace super-admin check
 │   ├── firestore_db.py             # Firestore client for config & history
-│   ├── workspace_client.py         # Google Workspace DWD, Directory & Licensing APIs
+│   ├── workspace_client.py         # Google Workspace DWD, Directory, Licensing & Gmail APIs
+│   ├── notifications.py            # Post-run email reports (Gmail API via DWD)
 │   ├── sync_worker.py              # Core sync engine (direct members, dedupe, assign SKU)
 │   └── scheduler_service.py        # Programmatic Cloud Scheduler API client
 ├── terraform/
@@ -155,7 +161,12 @@ Full breakdown with per-role rationale: [setup_instructions.md → Required Priv
 
 ### Security model
 
-The web UI and every `/api/*` endpoint deploy **public and unauthenticated**
-(`--allow-unauthenticated` + `allUsers` invoker). Anyone with the URL can change
-settings and trigger license assignment. Put IAP or IAM invoker auth in front before
-production use — see [setup_instructions.md → Security Model](setup_instructions.md#security-model).
+Optional two-layer access control: **Identity-Aware Proxy** authenticates the browser,
+then the **app verifies the IAP assertion and requires the user to be a Google Workspace
+super administrator** (Directory `isAdmin`), returning `403` otherwise. The Cloud
+Scheduler service account is allowed through `POST /api/sync/run` only.
+
+Enforcement turns on when `IAP_AUDIENCE` is set (`enable_iap = true` in Terraform).
+**Until then the UI and every `/api/*` endpoint are public** (`--allow-unauthenticated`
++ `allUsers` invoker) — fine only for a first smoke test. Full setup:
+[setup_instructions.md → Security Model](setup_instructions.md#security-model).
