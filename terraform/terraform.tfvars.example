@@ -24,4 +24,5 @@ github_repo = "my-org/gemini-license-provisioner"
 # app_service_account_id       = "sa-gemini-provisioner"
 # scheduler_service_account_id = "sa-scheduler-invoker"
 # artifact_repository_id       = "gemini-provisioner-docker"
-# scheduler_job_name           = "gemini-license-sync-job"
+# scheduler_job_name           = "gemini-license-sync-job"     # the cron trigger
+# sync_job_name                = "gemini-license-sync-runner"  # the Cloud Run job it executes

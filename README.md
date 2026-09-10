@@ -34,15 +34,15 @@ filled in.
 ## Architecture
 
 ```
-              ┌───────────────────────┐
-              │   Cloud Scheduler     │  cron → OIDC-authenticated POST
-              └───────────┬───────────┘
-                          ▼
-      (optional) ┌──────────────────┐
-   Google SSO ──►│ Identity-Aware   │  authenticates the browser / caller
-                 │ Proxy (IAP)      │
-                 └────────┬─────────┘
-                          ▼
+   ┌───────────────────────┐   cron → Cloud Run Admin API (:run)
+   │   Cloud Scheduler     │──────────────────────────────┐
+   └───────────────────────┘                              ▼
+                                          ┌──────────────────────────────┐
+      (optional) ┌──────────────────┐      │  Cloud Run Job               │
+   Google SSO ──►│ Identity-Aware   │      │  `python -m app.job_runner`  │
+                 │ Proxy (IAP)      │      │  → runs the sync engine      │
+                 └────────┬─────────┘      └──────────────┬───────────────┘
+                          ▼                               │ (same image)
    ┌─────────────────────────────────────────────────────────┐
    │  Cloud Run — one container (FastAPI)                     │
    │                                                         │
@@ -67,8 +67,9 @@ filled in.
 
 | Component | Role |
 | :--- | :--- |
-| **Cloud Run** (`app/`) | Single FastAPI container: admin UI + `POST /api/sync/run` worker endpoint |
-| **Cloud Scheduler** | Fires `POST /api/sync/run` on a cron schedule with an OIDC token |
+| **Cloud Run service** (`app/`) | Single FastAPI container: admin UI + `POST /api/sync/run` (manual "Run sync now" button) |
+| **Cloud Run job** (`app/job_runner.py`) | Same image, command `python -m app.job_runner`; runs the sync engine for scheduled runs — no HTTP, no IAP in the path |
+| **Cloud Scheduler** | On a cron schedule, calls the Cloud Run Admin API to execute the job (OAuth token, `roles/run.invoker` on the job) |
 | **Firestore** (Native mode) | `config/gemini_provisioner` (settings) and `sync_history/*` (run logs) |
 | **Domain‑Wide Delegation** | The runtime service account impersonates a Workspace admin — **keyless**, via the IAM Credentials API — to read groups/members (Admin SDK Directory) and, optionally, send report email (Gmail) |
 | **Gemini Enterprise licensing** | The runtime service account calls the **Discovery Engine API** directly (no DWD) to list license subscriptions and check/assign user licenses |
@@ -88,12 +89,13 @@ filled in.
 │   ├── workspace_client.py   # DWD credentials + Directory / Gmail clients
 │   ├── gemini_licensing.py   # Gemini Enterprise license configs + user licenses (Discovery Engine)
 │   ├── sync_worker.py        # Core sync engine
+│   ├── job_runner.py         # Batch entrypoint for scheduled runs (Cloud Run job)
 │   ├── notifications.py      # Post-run email report (Gmail API)
 │   ├── firestore_db.py       # Config + run-history persistence
 │   ├── scheduler_service.py  # Reads/updates the Cloud Scheduler job from the UI
 │   ├── templates/*.html      # Server-rendered Jinja2 views (Tailwind via CDN)
 │   └── static/css/custom.css
-├── tests/                    # pytest: test_api, test_auth, test_gemini_licensing, test_notifications, test_sync
+├── tests/                    # pytest: test_api, test_auth, test_gemini_licensing, test_job_runner, test_notifications, test_sync
 ├── scripts/
 │   ├── setup_wif.sh          # One-time Workload Identity Federation bootstrap
 │   └── test_local.py         # Dependency-free smoke test of the sync engine
@@ -136,8 +138,9 @@ license management). IAP (`iap`) and Gmail (`gmail`) only if you use those featu
 
 One project with billing, a Firestore database (Native mode), an Artifact Registry
 Docker repo, one runtime service account (also used by CI), a Cloud Scheduler service
-account, a Cloud Run service, a Cloud Scheduler job, and a Workload Identity pool/provider
-for GitHub Actions. All created by `setup_instructions.md` (or `terraform/`).
+account, a Cloud Run service, a Cloud Run job (scheduled sync), a Cloud Scheduler job
+(the cron trigger), and a Workload Identity pool/provider for GitHub Actions. All
+created by `setup_instructions.md` (or `terraform/`).
 
 ### Google Workspace
 
@@ -168,9 +171,9 @@ from the admin UI, which persists them to Firestore.
 | `RUNTIME_SERVICE_ACCOUNT_EMAIL` | yes (on Cloud Run) | — | The attached service account; needed for keyless DWD |
 | `DELEGATED_ADMIN_EMAIL` | yes | placeholder | Workspace admin the service impersonates (also editable on the Settings page) |
 | `LICENSE_CONFIG` | no | unset | Optional headless default for the Gemini Enterprise subscription (a Discovery Engine license config resource name); normally chosen on the Settings page |
-| `CLOUD_SCHEDULER_JOB_NAME` | no | `gemini-license-sync-job` | Job the UI reads/updates |
+| `CLOUD_SCHEDULER_JOB_NAME` | no | `gemini-license-sync-job` | Cron trigger job the UI reads/updates |
 | `IAP_AUDIENCE` | no | unset | **Turns on** IAP + super-admin enforcement; the IAP JWT `aud` to verify |
-| `SYNC_INVOKER_SA_EMAIL` | no | unset | Scheduler SA allowed through `POST /api/sync/run` when enforcement is on |
+| `SYNC_INVOKER_SA_EMAIL` | no | unset | Optional: a service account allowed through `POST /api/sync/run` when enforcement is on (scheduled runs use the Cloud Run job, not this) |
 | `AUTH_BOOTSTRAP_ADMINS` | no | empty | Comma-separated break-glass admin emails |
 | `SUPER_ADMIN_CACHE_TTL` | no | `300` | Seconds to cache each super-admin lookup |
 | `NOTIFICATION_SENDER_EMAIL` | no | delegated admin | Mailbox that run-report emails are sent as |
@@ -180,10 +183,11 @@ from the admin UI, which persists them to Firestore.
 
 Repository variables consumed by `.github/workflows/deploy.yml`: `GCP_PROJECT_ID`
 (required), `GCP_REGION`, `CLOUD_RUN_SERVICE`, `ARTIFACT_REPO`, `CLOUD_SCHEDULER_JOB`,
-`DELEGATED_ADMIN_EMAIL`, `IAP_AUDIENCE`, `SYNC_INVOKER_SA_EMAIL`, `AUTH_BOOTSTRAP_ADMINS`,
-`SUPER_ADMIN_CACHE_TTL`, `NOTIFICATION_SENDER_EMAIL`, `PUBLIC_BASE_URL`,
-`CLOUD_RUN_ALLOW_UNAUTH` (`false` after enabling IAP), `CLOUD_RUN_ENABLE_IAP`
-(`true`/`false` to toggle IAP on deploy).
+`CLOUD_RUN_JOB` (scheduled-sync job, default `gemini-license-sync-runner`),
+`DELEGATED_ADMIN_EMAIL`, `LICENSE_CONFIG`, `IAP_AUDIENCE`, `SYNC_INVOKER_SA_EMAIL`,
+`AUTH_BOOTSTRAP_ADMINS`, `SUPER_ADMIN_CACHE_TTL`, `NOTIFICATION_SENDER_EMAIL`,
+`PUBLIC_BASE_URL`, `CLOUD_RUN_ALLOW_UNAUTH` (`false` after enabling IAP),
+`CLOUD_RUN_ENABLE_IAP` (`true`/`false` to toggle IAP on deploy).
 
 ---
 
@@ -236,11 +240,15 @@ Full rationale: [setup_instructions.md → Required Privileges](setup_instructio
 
 Optional, two layers, enabled together:
 
-1. **Identity‑Aware Proxy** authenticates every request (Google SSO for browsers, OIDC
-   for the scheduler) and forwards a signed assertion.
+1. **Identity‑Aware Proxy** authenticates every request to the web service (Google SSO
+   for browsers) and forwards a signed assertion.
 2. **The app** verifies that assertion and requires the user to be an active Google
-   Workspace **super administrator** (`isAdmin`); everyone else gets `403`. The Cloud
-   Scheduler service account is allowed through `POST /api/sync/run` only.
+   Workspace **super administrator** (`isAdmin`); everyone else gets `403`.
+
+Scheduled sync does **not** go through the web service or IAP — Cloud Scheduler executes
+the Cloud Run job directly. `SYNC_INVOKER_SA_EMAIL` still lets a named service account
+call `POST /api/sync/run` if you ever need a second HTTP trigger, but the schedule no
+longer relies on it.
 
 Enforcement turns on when `IAP_AUDIENCE` is set. **Until then the UI and all `/api/*`
 endpoints are public** (`--allow-unauthenticated` + `allUsers` invoker) — acceptable
