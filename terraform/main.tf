@@ -3,7 +3,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 5.15.0"
+      version = ">= 6.20.0" # iap_enabled on google_cloud_run_v2_service
     }
   }
 }
@@ -11,6 +11,16 @@ terraform {
 provider "google" {
   project = var.project_id
   region  = var.region
+}
+
+data "google_project" "current" {}
+
+locals {
+  # Workspace domain inferred from the delegated admin address; used for the
+  # default IAP allow-list. Override with var.iap_members.
+  workspace_domain = try(split("@", var.delegated_admin_email)[1], "example.com")
+  iap_members      = length(var.iap_members) > 0 ? var.iap_members : ["domain:${local.workspace_domain}"]
+  iap_sa_member    = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
 }
 
 # -----------------------------------------------------------------------------
@@ -110,6 +120,17 @@ resource "google_cloud_run_v2_service" "provisioner" {
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
 
+  # Identity-Aware Proxy. When true the app also requires the IAP-asserted user
+  # to be a Google Workspace super admin (needs IAP_AUDIENCE env var, below).
+  iap_enabled = var.enable_iap
+
+  lifecycle {
+    precondition {
+      condition     = !var.enable_iap || var.iap_audience != ""
+      error_message = "Set var.iap_audience when enable_iap = true, so the app can verify the IAP JWT and enforce the Workspace super-admin check."
+    }
+  }
+
   template {
     service_account = google_service_account.app_sa.email
     timeout         = "600s" # 10-minute timeout for large directory sync runs
@@ -144,6 +165,14 @@ resource "google_cloud_run_v2_service" "provisioner" {
       env {
         name  = "RUNTIME_SERVICE_ACCOUNT_EMAIL"
         value = google_service_account.app_sa.email
+      }
+      env {
+        name  = "IAP_AUDIENCE"
+        value = var.iap_audience
+      }
+      env {
+        name  = "SYNC_INVOKER_SA_EMAIL"
+        value = google_service_account.scheduler_sa.email
       }
       env {
         name  = "NOTIFICATION_SENDER_EMAIL"
@@ -195,15 +224,50 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
   member   = "serviceAccount:${google_service_account.scheduler_sa.email}"
 }
 
-# WARNING: this makes the admin UI and every /api/* endpoint public and
-# unauthenticated. See "Security Model" in setup_instructions.md. For real use,
-# remove this resource and either enable IAP or grant roles/run.invoker to
-# specific users/groups plus the scheduler service account.
+# Public invoker binding - ONLY when IAP is disabled. With enable_iap = true this
+# is dropped and the IAP service agent (below) is the sole run.invoker.
+# WARNING (enable_iap = false): the admin UI and every /api/* endpoint are then
+# public and unauthenticated. See "Security Model" in setup_instructions.md.
 resource "google_cloud_run_v2_service_iam_member" "public_access" {
+  count    = var.enable_iap ? 0 : 1
   location = google_cloud_run_v2_service.provisioner.location
   name     = google_cloud_run_v2_service.provisioner.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# -----------------------------------------------------------------------------
+# 4b. Identity-Aware Proxy (only when enable_iap = true)
+# -----------------------------------------------------------------------------
+# The IAP service agent invokes Cloud Run on the authenticated user's behalf.
+resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
+  count    = var.enable_iap ? 1 : 0
+  location = google_cloud_run_v2_service.provisioner.location
+  name     = google_cloud_run_v2_service.provisioner.name
+  role     = "roles/run.invoker"
+  member   = local.iap_sa_member
+}
+
+# Who may pass through IAP. The app further restricts this to Workspace super
+# admins, so a domain-wide grant here is acceptable; tighten to a group if you
+# prefer. Set var.iap_members to override the default (domain:<workspace_domain>).
+resource "google_iap_web_cloud_run_service_iam_member" "accessors" {
+  for_each              = toset(var.enable_iap ? local.iap_members : [])
+  project               = var.project_id
+  location              = var.region
+  cloud_run_service_name = google_cloud_run_v2_service.provisioner.name
+  role                  = "roles/iap.httpsResourceAccessor"
+  member                = each.value
+}
+
+# Cloud Scheduler's SA must also be allowed through IAP to reach /api/sync/run.
+resource "google_iap_web_cloud_run_service_iam_member" "scheduler_accessor" {
+  count                 = var.enable_iap ? 1 : 0
+  project               = var.project_id
+  location              = var.region
+  cloud_run_service_name = google_cloud_run_v2_service.provisioner.name
+  role                  = "roles/iap.httpsResourceAccessor"
+  member                = "serviceAccount:${google_service_account.scheduler_sa.email}"
 }
 
 # -----------------------------------------------------------------------------
@@ -229,9 +293,11 @@ resource "google_cloud_scheduler_job" "sync_job" {
       "triggered_by" = "scheduled"
     }))
 
+    # With IAP on, the OIDC token must be minted for the IAP OAuth client ID so
+    # IAP accepts it; otherwise it targets the Cloud Run URL directly.
     oidc_token {
       service_account_email = google_service_account.scheduler_sa.email
-      audience              = google_cloud_run_v2_service.provisioner.uri
+      audience              = var.enable_iap && var.iap_oauth_client_id != "" ? var.iap_oauth_client_id : google_cloud_run_v2_service.provisioner.uri
     }
   }
 }

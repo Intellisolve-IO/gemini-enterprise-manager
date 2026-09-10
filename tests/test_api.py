@@ -6,8 +6,36 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastapi.testclient import TestClient
 from app.main import app
+from app.config import settings
 
 client = TestClient(app)
+
+
+def test_iap_enforced_blocks_unauthenticated(monkeypatch):
+    """With IAP_AUDIENCE set, pages and mutating APIs require an IAP assertion."""
+    monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
+    assert client.get("/").status_code == 401
+    assert client.post("/api/settings", json={
+        "delegated_admin_email": "a@b.com", "product_id": "x", "sku_id": "y"
+    }).status_code == 401
+    # health probe stays open for Cloud Run
+    assert client.get("/healthz").status_code == 200
+
+
+def test_iap_enforced_allows_super_admin(monkeypatch):
+    monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
+    monkeypatch.setattr("app.auth._verify_iap_assertion", lambda a: {"email": "boss@example.com"})
+    monkeypatch.setattr("app.auth.is_super_admin", lambda e: True)
+    mock_config = {
+        "monitored_groups": [], "product_id": "Google-Apps", "sku_id": "101031",
+        "delegated_admin_email": "admin@example.com", "cron_expression": "0 2 * * *",
+        "notification_emails": [], "notify_on": "failures",
+    }
+    with patch("app.main.get_config", return_value=mock_config), \
+         patch("app.main.get_sync_history", return_value=[]):
+        r = client.get("/", headers={"x-goog-iap-jwt-assertion": "tok"})
+        assert r.status_code == 200
+        assert "boss@example.com" in r.text
 
 
 def test_healthz():

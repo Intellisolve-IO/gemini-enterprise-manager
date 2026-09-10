@@ -32,7 +32,8 @@ for mod in [
 class MockBaseSettings:
     def __init__(self, **kwargs):
         for k, v in self.__class__.__dict__.items():
-            if not k.startswith("_"):
+            # Skip dunders and descriptors (e.g. @property) - they stay on the class.
+            if not k.startswith("_") and not isinstance(v, (property, staticmethod, classmethod)):
                 setattr(self, k, v)
 
 sys.modules["pydantic_settings"].BaseSettings = MockBaseSettings

@@ -54,6 +54,35 @@ class Settings(BaseSettings):
     PORT: int = int(os.getenv("PORT", 8080))
     DEBUG: bool = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
 
+    # --- Access control (Identity-Aware Proxy + Workspace super-admin check) ---
+    # Enforcement turns ON as soon as IAP_AUDIENCE is set. When set, every page and
+    # every mutating API requires a valid IAP assertion whose email is a Google
+    # Workspace *super administrator*. Leave empty for local dev / pre-IAP deploys.
+    #
+    # IAP_AUDIENCE for Cloud Run is "/projects/<PROJECT_NUMBER>/global/backendServices/<ID>"
+    # (get it from the IAP console or `gcloud iap ...`; see setup_instructions.md).
+    IAP_AUDIENCE: Optional[str] = os.getenv("IAP_AUDIENCE", None)
+    IAP_JWT_HEADER: str = os.getenv("IAP_JWT_HEADER", "x-goog-iap-jwt-assertion")
+
+    # Service account the scheduler uses to call POST /api/sync/run. When IAP is on,
+    # its IAP assertion email is allowed through even though it is not a super admin.
+    SYNC_INVOKER_SA_EMAIL: Optional[str] = os.getenv("SYNC_INVOKER_SA_EMAIL", None)
+
+    # Break-glass allow-list: comma-separated emails always treated as authorized
+    # (e.g. if the Directory API is unavailable). Use sparingly.
+    AUTH_BOOTSTRAP_ADMINS: str = os.getenv("AUTH_BOOTSTRAP_ADMINS", "")
+
+    # Seconds to cache a "<email> is super admin" lookup.
+    SUPER_ADMIN_CACHE_TTL: int = int(os.getenv("SUPER_ADMIN_CACHE_TTL", "300"))
+
+    @property
+    def AUTH_ENABLED(self) -> bool:
+        return bool(self.IAP_AUDIENCE)
+
+    @property
+    def bootstrap_admin_emails(self) -> set:
+        return {e.strip().lower() for e in self.AUTH_BOOTSTRAP_ADMINS.split(",") if e.strip()}
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
