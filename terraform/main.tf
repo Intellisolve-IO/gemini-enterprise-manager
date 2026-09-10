@@ -80,6 +80,16 @@ resource "google_project_iam_member" "sa_logging" {
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
+# Allow the application service account to mint signed JWTs as itself (IAM Credentials
+# API: signBlob). This is what enables keyless Google Workspace Domain-Wide Delegation
+# from Cloud Run - the app signs a JWT asserting the delegated-admin subject and
+# exchanges it for an access token, with no exported service account key.
+resource "google_service_account_iam_member" "sa_token_creator_self" {
+  service_account_id = google_service_account.app_sa.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
 # Cloud Scheduler Invoker Service Account
 resource "google_service_account" "scheduler_sa" {
   account_id   = "sa-scheduler-invoker"
@@ -93,7 +103,8 @@ resource "google_service_account" "scheduler_sa" {
 resource "google_cloud_run_v2_service" "provisioner" {
   depends_on = [
     google_project_service.apis,
-    google_project_iam_member.sa_firestore
+    google_project_iam_member.sa_firestore,
+    google_service_account_iam_member.sa_token_creator_self
   ]
   name     = var.service_name
   location = var.region
@@ -129,6 +140,10 @@ resource "google_cloud_run_v2_service" "provisioner" {
       env {
         name  = "DELEGATED_ADMIN_EMAIL"
         value = var.delegated_admin_email
+      }
+      env {
+        name  = "RUNTIME_SERVICE_ACCOUNT_EMAIL"
+        value = google_service_account.app_sa.email
       }
       env {
         name  = "PRODUCT_ID"

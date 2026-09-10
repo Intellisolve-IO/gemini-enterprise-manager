@@ -68,7 +68,21 @@ gcloud projects add-iam-policy-binding ge-hoffhouse \
 gcloud projects add-iam-policy-binding ge-hoffhouse \
   --member="serviceAccount:sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com" \
   --role="roles/logging.logWriter"
+
+# Allow the Service Account to sign JWTs as itself (keyless Domain-Wide Delegation).
+# Without this, the deployed service authenticates as the bare Service Account and the
+# Directory API returns "404: Domain not found" on the Test Connection button.
+gcloud iam service-accounts add-iam-policy-binding \
+  sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com \
+  --member="serviceAccount:sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="ge-hoffhouse"
 ```
+
+> The Cloud Run service must also receive the `RUNTIME_SERVICE_ACCOUNT_EMAIL`
+> environment variable (set to `sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com`).
+> The Terraform config and the GitHub Actions workflow in this repo already set it; if you
+> deploy `gcloud run deploy` by hand, add it to `--set-env-vars`.
 
 Retrieve the **Unique Numeric Client ID** of the Service Account (needed for Step 4):
 
@@ -156,3 +170,24 @@ Once deployed:
    - Confirm or update the cron frequency (e.g. Daily at 2 AM or Hourly).
    - Click **Update Cloud Scheduler**.
 5. Click **Run Sync Now** to execute your first automated provisioning cycle!
+
+---
+
+## Troubleshooting
+
+### Test Connection returns `API Error (404): Domain not found.`
+
+The service reached Google but called the Directory API as the bare runtime Service
+Account instead of impersonating a Workspace admin. Check, in order:
+
+1. **`roles/iam.serviceAccountTokenCreator` on the SA itself** (Step 3, last command).
+2. **`RUNTIME_SERVICE_ACCOUNT_EMAIL`** is set on the Cloud Run service and matches the
+   attached Service Account.
+3. **`iamcredentials.googleapis.com`** is enabled (Step 1).
+4. The **Delegated Admin Email** domain is a real Google Workspace / Cloud Identity
+   domain, and that user is an **active super administrator**.
+5. The Domain-Wide Delegation entry (Step 4) uses the SA's **numeric client ID** with
+   all three scopes.
+
+Once impersonation works but privileges are wrong, the error changes to `401
+unauthorized_client` or `403` - that points at Step 4 or the admin user's role.
