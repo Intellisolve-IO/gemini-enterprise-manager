@@ -19,6 +19,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/apps.licensing",
 ]
 
+# Requested only when sending run notifications. Must be added to the service
+# account's Domain-Wide Delegation entry separately (see setup_instructions.md);
+# it is intentionally not in SCOPES so the directory/licensing calls keep working
+# even if this scope has not been authorized.
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
 _OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
@@ -28,16 +34,22 @@ class WorkspaceClient:
     def __init__(self, delegated_admin_email: Optional[str] = None):
         self.delegated_admin_email = delegated_admin_email or settings.DELEGATED_ADMIN_EMAIL
 
-    def get_credentials(self, subject_email: Optional[str] = None):
-        """Build Google OAuth2 credentials with Domain-Wide Delegation (DWD)."""
+    def get_credentials(self, subject_email: Optional[str] = None,
+                        scopes: Optional[List[str]] = None):
+        """Build Google OAuth2 credentials with Domain-Wide Delegation (DWD).
+
+        `scopes` defaults to the directory/licensing SCOPES; pass a narrower list
+        (e.g. [GMAIL_SEND_SCOPE]) for other APIs.
+        """
         subject = subject_email or self.delegated_admin_email
+        scopes = scopes or SCOPES
 
         # 1. Check if raw JSON string is provided in env var (e.g. from Secret Manager)
         if settings.SERVICE_ACCOUNT_KEY_JSON:
             try:
                 key_info = json.loads(settings.SERVICE_ACCOUNT_KEY_JSON)
                 creds = service_account.Credentials.from_service_account_info(
-                    key_info, scopes=SCOPES
+                    key_info, scopes=scopes
                 )
                 return creds.with_subject(subject) if subject else creds
             except Exception as e:
@@ -48,7 +60,7 @@ class WorkspaceClient:
         if settings.SERVICE_ACCOUNT_KEY_PATH and os.path.exists(settings.SERVICE_ACCOUNT_KEY_PATH):
             try:
                 creds = service_account.Credentials.from_service_account_file(
-                    settings.SERVICE_ACCOUNT_KEY_PATH, scopes=SCOPES
+                    settings.SERVICE_ACCOUNT_KEY_PATH, scopes=scopes
                 )
                 return creds.with_subject(subject) if subject else creds
             except Exception as e:
@@ -99,7 +111,7 @@ class WorkspaceClient:
                 signer=signer,
                 service_account_email=sa_email,
                 token_uri=_OAUTH_TOKEN_URI,
-                scopes=SCOPES,
+                scopes=scopes,
                 subject=subject,
             )
         except Exception as e:
@@ -120,6 +132,15 @@ class WorkspaceClient:
         """Construct Google Workspace Enterprise License Manager API client."""
         creds = self.get_credentials(subject_email)
         return build("licensing", "v1", credentials=creds, cache_discovery=False)
+
+    def get_gmail_service(self, subject_email: Optional[str] = None):
+        """Construct a Gmail API client that sends mail as the impersonated user.
+
+        Requires the gmail.send scope to be authorized for the service account in
+        the Workspace Admin Console (Domain-Wide Delegation).
+        """
+        creds = self.get_credentials(subject_email, scopes=[GMAIL_SEND_SCOPE])
+        return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
     def test_dwd_connection(self, subject_email: Optional[str] = None) -> Dict[str, Any]:
         """Perform a live connectivity and permission test against the Directory API.

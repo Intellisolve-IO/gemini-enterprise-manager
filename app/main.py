@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import Dict, Any, List, Optional
+import re
+from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
@@ -39,6 +40,35 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.globals["gcp_project_id"] = settings.GCP_PROJECT_ID or "unset"
 templates.env.globals["gcp_region"] = settings.GCP_REGION
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Last public base URL persisted to Firestore config (per process cache, so we
+# only write when it actually changes).
+_seen_base_url: Optional[str] = None
+
+
+@app.middleware("http")
+async def capture_base_url(request: Request, call_next):
+    """Learn this service's public base URL from real traffic so scheduler-triggered
+    runs (which have no request) can build absolute links in notification emails.
+
+    Only ``*.run.app`` hosts are auto-trusted (the client-controlled Host header
+    could otherwise poison the link). For a custom domain, set ``PUBLIC_BASE_URL``.
+    """
+    global _seen_base_url
+    try:
+        if not settings.PUBLIC_BASE_URL and request.method == "GET" and \
+                not request.url.path.startswith(("/static", "/healthz", "/api")):
+            base = str(request.base_url).rstrip("/")
+            host = request.url.hostname or ""
+            trusted = host.endswith(".run.app") or host in ("localhost", "127.0.0.1")
+            if base and trusted and base != _seen_base_url:
+                _seen_base_url = base
+                if get_config().get("public_base_url") != base:
+                    update_config({"public_base_url": base})
+    except Exception as e:  # never break a request over this
+        logger.debug("base URL capture skipped: %s", e)
+    return await call_next(request)
+
 
 # -------------------------------------------------------------------------
 # Request Schemas
@@ -49,6 +79,12 @@ class GroupsPayload(BaseModel):
 
 class SchedulePayload(BaseModel):
     cron_expression: str
+
+
+class NotificationsPayload(BaseModel):
+    # Accept a list or a raw comma/newline separated string from the form.
+    notification_emails: Union[List[str], str] = []
+    notify_on: str = "failures"  # "failures" or "all"
 
 
 class SettingsPayload(BaseModel):
@@ -200,6 +236,44 @@ async def update_sync_schedule(payload: SchedulePayload):
         "cron_expression": cron,
         "cloud_scheduler": sched_result,
         "message": f"Schedule set to '{cron}' in Firestore. Cloud Scheduler: {sched_result.get('message')}"
+    }
+
+
+@app.post("/api/notifications")
+async def update_notifications(payload: NotificationsPayload):
+    """Save sync-run email notification settings to Firestore."""
+    raw = payload.notification_emails
+    if isinstance(raw, str):
+        raw = raw.replace("\n", ",").split(",")
+    emails = [e.strip() for e in raw if e and e.strip()]
+
+    invalid = [e for e in emails if not _EMAIL_RE.match(e)]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid email address(es): {', '.join(invalid)}")
+
+    notify_on = payload.notify_on.strip().lower()
+    if notify_on not in ("failures", "all"):
+        raise HTTPException(status_code=400, detail="notify_on must be 'failures' or 'all'.")
+
+    try:
+        updated = update_config({
+            "notification_emails": emails,
+            "notify_on": notify_on,
+        })
+    except Exception as e:
+        logger.error("Failed to save notification settings: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    scope = "all runs" if notify_on == "all" else "failed & partial runs only"
+    msg = (
+        f"Notifications saved: {len(emails)} recipient(s), alerting on {scope}."
+        if emails else "Notifications disabled (no recipients)."
+    )
+    return {
+        "success": True,
+        "message": msg,
+        "notification_emails": updated.get("notification_emails", []),
+        "notify_on": updated.get("notify_on", "failures"),
     }
 
 

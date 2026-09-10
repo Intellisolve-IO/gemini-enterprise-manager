@@ -146,6 +146,14 @@ resource "google_cloud_run_v2_service" "provisioner" {
         value = google_service_account.app_sa.email
       }
       env {
+        name  = "NOTIFICATION_SENDER_EMAIL"
+        value = var.notification_sender_email
+      }
+      env {
+        name  = "PUBLIC_BASE_URL"
+        value = var.public_base_url
+      }
+      env {
         name  = "PRODUCT_ID"
         value = var.product_id
       }

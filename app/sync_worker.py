@@ -6,8 +6,19 @@ from typing import Dict, Any, List, Set
 from app.config import settings
 from app.firestore_db import get_config, record_sync_history
 from app.workspace_client import WorkspaceClient
+from app.notifications import send_sync_notification
 
 logger = logging.getLogger("gemini_provisioner.sync")
+
+
+def _notify(config: Dict[str, Any], run_record: Dict[str, Any]) -> None:
+    """Best-effort run notification; never lets a mail error escape."""
+    try:
+        result = send_sync_notification(config, run_record)
+        run_record["notification"] = result
+    except Exception as e:  # pragma: no cover - defensive
+        logger.error("Notification dispatch failed: %s", e)
+        run_record["notification"] = {"sent": False, "reason": str(e)}
 
 
 def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
@@ -55,7 +66,11 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
             "errors": [],
             "message": "No groups configured for monitoring."
         }
-        record_sync_history(run_record)
+        try:
+            run_record["doc_id"] = record_sync_history(run_record)
+        except Exception as e:
+            logger.error("Could not write sync record to Firestore: %s", e)
+        _notify(config, run_record)
         return run_record
 
     for group_email in monitored_groups:
@@ -167,6 +182,8 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
         run_record["doc_id"] = doc_id
     except Exception as e:
         logger.error("Could not write sync record to Firestore: %s", e)
+
+    _notify(config, run_record)
 
     logger.info(
         "Sync completed in %.2fs. Evaluated: %d, Assigned: %d, Already Held: %d, Nested Groups Skipped: %d, Errors: %d",

@@ -51,6 +51,18 @@ variable "delegated_admin_email" {
   default     = "workspace-admin@your-domain.com"
 }
 
+variable "notification_sender_email" {
+  description = "Mailbox to send sync-run notification emails as (Gmail API + DWD). Empty = use delegated_admin_email. Requires the gmail.send scope on the DWD entry."
+  type        = string
+  default     = ""
+}
+
+variable "public_base_url" {
+  description = "Public https base URL of the service, used for links in notification emails. Empty = the app learns it from web traffic."
+  type        = string
+  default     = ""
+}
+
 variable "product_id" {
   description = "Google Workspace Product ID for license assignment (e.g. Google-Apps or 101047)."
   type        = string

@@ -50,7 +50,9 @@ Domain-wide delegation → Add new:
 | Field | Value |
 | :--- | :--- |
 | Client ID | `112103280116941655961` (the service account's numeric `uniqueId`) |
-| OAuth scopes | `https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing` |
+| OAuth scopes | `https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing,https://www.googleapis.com/auth/gmail.send` |
+
+(`gmail.send` is only needed for run-notification emails.)
 
 Delegated admin impersonated at runtime: `david@hoffshouse.com` (active super admin).
 
