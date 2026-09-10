@@ -73,7 +73,7 @@ jobs:
             --timeout 600 \
             --memory 1024Mi \
             --cpu 1 \
-            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=gemini-license-sync-job" \
+            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=gemini-license-sync-job,RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --allow-unauthenticated \
             --quiet
 

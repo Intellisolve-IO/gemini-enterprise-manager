@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     SERVICE_ACCOUNT_KEY_PATH: Optional[str] = os.getenv("SERVICE_ACCOUNT_KEY_PATH", None)
     SERVICE_ACCOUNT_KEY_JSON: Optional[str] = os.getenv("SERVICE_ACCOUNT_KEY_JSON", None)
 
+    # Runtime service account email, used for keyless Domain-Wide Delegation on Cloud Run
+    # via the IAM Service Account Credentials API. Must be set explicitly because the
+    # metadata server commonly reports the attached service account as "default".
+    RUNTIME_SERVICE_ACCOUNT_EMAIL: Optional[str] = os.getenv("RUNTIME_SERVICE_ACCOUNT_EMAIL", None)
+
     # Web & Security
     PORT: int = int(os.getenv("PORT", 8080))
     DEBUG: bool = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
