@@ -155,12 +155,14 @@ jobs:
           [ -n "${LICENSE_CONFIG}" ]            && JOB_ENV_VARS="${JOB_ENV_VARS},LICENSE_CONFIG=${LICENSE_CONFIG}"
 
           echo "Deploying ${IMAGE_URI} to Cloud Run job '${{ env.SYNC_JOB }}'..."
+          # Use `--flag=value` form: the args value starts with "-m", which gcloud
+          # would otherwise parse as another flag ("--args: expected one argument").
           gcloud run jobs deploy ${{ env.SYNC_JOB }} \
             --image "${IMAGE_URI}" \
             --region ${{ env.REGION }} \
             --service-account "${{ secrets.WIF_SERVICE_ACCOUNT }}" \
-            --command python \
-            --args "-m,app.job_runner" \
+            --command=python \
+            --args=-m,app.job_runner \
             --max-retries 0 \
             --task-timeout 1800 \
             --set-env-vars "${JOB_ENV_VARS}" \
