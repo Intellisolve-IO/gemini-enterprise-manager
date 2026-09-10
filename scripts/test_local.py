@@ -21,7 +21,8 @@ from unittest.mock import MagicMock
 for mod in [
     "pydantic", "pydantic_settings", "google", "google.cloud", "google.cloud.firestore",
     "google.cloud.scheduler_v1", "google.oauth2", "google.oauth2.service_account",
-    "google.auth", "googleapiclient", "googleapiclient.discovery", "googleapiclient.errors",
+    "google.auth", "google.auth.iam", "google.auth.transport", "google.auth.transport.requests",
+    "googleapiclient", "googleapiclient.discovery", "googleapiclient.errors",
     "fastapi", "fastapi.staticfiles", "fastapi.templating", "jinja2"
 ]:
     if mod not in sys.modules:
@@ -49,10 +50,10 @@ def run_tests():
     # Test Case 1: Nested groups skipped & flagged, direct users licensed
     print("\n[Test 1] Testing Flat Group Membership & Nested Group Error Logging...")
     mock_config = {
-        "monitored_groups": ["ai-engineers@hoffhouse.com"],
+        "monitored_groups": ["ai-engineers@example.com"],
         "product_id": "Google-Apps",
         "sku_id": "101031",
-        "delegated_admin_email": "admin@hoffhouse.com"
+        "delegated_admin_email": "admin@example.com"
     }
 
     # Group has:
@@ -60,9 +61,9 @@ def run_tests():
     # 2. user2: already has license
     # 3. subgroup: nested group (MUST be rejected with error log)
     mock_members = [
-        {"email": "user1@hoffhouse.com", "type": "USER"},
-        {"email": "user2@hoffhouse.com", "type": "USER"},
-        {"email": "subgroup@hoffhouse.com", "type": "GROUP"},
+        {"email": "user1@example.com", "type": "USER"},
+        {"email": "user2@example.com", "type": "USER"},
+        {"email": "subgroup@example.com", "type": "GROUP"},
     ]
 
     with patch("app.sync_worker.get_config", return_value=mock_config), \
@@ -75,7 +76,7 @@ def run_tests():
 
         # user1 has no license, user2 already has license
         def mock_check(prod, sku, user):
-            return user == "user2@hoffhouse.com"
+            return user == "user2@example.com"
         
         mock_client.check_license.side_effect = mock_check
         mock_client.assign_license.return_value = (True, None)
@@ -91,35 +92,35 @@ def run_tests():
 
         # Verify error structure
         assert result["errors_count"] == 1
-        assert "subgroup@hoffhouse.com" in result["errors"][0]["item"]
+        assert "subgroup@example.com" in result["errors"][0]["item"]
         assert "Nested groups are not supported" in result["errors"][0]["error"]
 
         # Verify assign_license was called only for user1
-        mock_client.assign_license.assert_called_once_with("Google-Apps", "101031", "user1@hoffhouse.com")
+        mock_client.assign_license.assert_called_once_with("Google-Apps", "101031", "user1@example.com")
 
         print("  ✓ Evaluated users correctly: 2")
-        print("  ✓ Nested group 'subgroup@hoffhouse.com' caught and logged as error")
-        print("  ✓ License successfully assigned to 'user1@hoffhouse.com'")
-        print("  ✓ License skipped for 'user2@hoffhouse.com' (already held)")
+        print("  ✓ Nested group 'subgroup@example.com' caught and logged as error")
+        print("  ✓ License successfully assigned to 'user1@example.com'")
+        print("  ✓ License skipped for 'user2@example.com' (already held)")
         print("  ✓ Test 1 PASSED!")
 
     # Test Case 2: Multi-group user deduplication
     print("\n[Test 2] Testing Multi-Group Member Deduplication...")
     mock_config = {
-        "monitored_groups": ["group-a@hoffhouse.com", "group-b@hoffhouse.com"],
+        "monitored_groups": ["group-a@example.com", "group-b@example.com"],
         "product_id": "Google-Apps",
         "sku_id": "101031",
-        "delegated_admin_email": "admin@hoffhouse.com"
+        "delegated_admin_email": "admin@example.com"
     }
 
     # charlie is in both group-a and group-b
     group_a_members = [
-        {"email": "charlie@hoffhouse.com", "type": "USER"},
-        {"email": "dan@hoffhouse.com", "type": "USER"}
+        {"email": "charlie@example.com", "type": "USER"},
+        {"email": "dan@example.com", "type": "USER"}
     ]
     group_b_members = [
-        {"email": "charlie@hoffhouse.com", "type": "USER"},
-        {"email": "eve@hoffhouse.com", "type": "USER"}
+        {"email": "charlie@example.com", "type": "USER"},
+        {"email": "eve@example.com", "type": "USER"}
     ]
 
     with patch("app.sync_worker.get_config", return_value=mock_config), \
@@ -141,7 +142,7 @@ def run_tests():
         assert result["errors_count"] == 0
 
         print("  ✓ Total groups processed: 2")
-        print("  ✓ Duplicate user 'charlie@hoffhouse.com' deduplicated across groups")
+        print("  ✓ Duplicate user 'charlie@example.com' deduplicated across groups")
         print("  ✓ Exactly 3 licenses assigned")
         print("  ✓ Test 2 PASSED!")
 
@@ -151,7 +152,7 @@ def run_tests():
         "monitored_groups": [],
         "product_id": "Google-Apps",
         "sku_id": "101031",
-        "delegated_admin_email": "admin@hoffhouse.com"
+        "delegated_admin_email": "admin@example.com"
     }
 
     with patch("app.sync_worker.get_config", return_value=mock_config), \

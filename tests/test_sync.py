@@ -10,20 +10,20 @@ from app.sync_worker import run_license_sync
 def test_sync_engine_handles_nested_group_failure():
     """Test that nested groups are logged as explicit errors and not recursed/assigned licenses."""
     mock_config = {
-        "monitored_groups": ["ai-team@hoffhouse.com"],
+        "monitored_groups": ["ai-team@example.com"],
         "product_id": "Google-Apps",
         "sku_id": "101031",
-        "delegated_admin_email": "admin@hoffhouse.com"
+        "delegated_admin_email": "admin@example.com"
     }
 
-    # Mock direct members of ai-team@hoffhouse.com:
+    # Mock direct members of ai-team@example.com:
     # 1 valid user needing license
     # 1 valid user already licensed
     # 1 nested group (which must be flagged as unsupported and skipped)
     mock_members = [
-        {"email": "alice@hoffhouse.com", "type": "USER"},
-        {"email": "bob@hoffhouse.com", "type": "USER"},
-        {"email": "subteam-nested@hoffhouse.com", "type": "GROUP"},
+        {"email": "alice@example.com", "type": "USER"},
+        {"email": "bob@example.com", "type": "USER"},
+        {"email": "subteam-nested@example.com", "type": "GROUP"},
     ]
 
     with patch("app.sync_worker.get_config", return_value=mock_config), \
@@ -36,7 +36,7 @@ def test_sync_engine_handles_nested_group_failure():
 
         # Alice lacks license (False), Bob already has license (True)
         def mock_check_license(prod, sku, user):
-            if user == "alice@hoffhouse.com":
+            if user == "alice@example.com":
                 return False
             return True
         mock_client.check_license.side_effect = mock_check_license
@@ -50,16 +50,16 @@ def test_sync_engine_handles_nested_group_failure():
         assert result["evaluated_users_count"] == 2   # Alice and Bob
         assert result["licenses_assigned_count"] == 1  # Alice
         assert result["licenses_already_held_count"] == 1  # Bob
-        assert result["nested_groups_count"] == 1     # subteam-nested@hoffhouse.com
+        assert result["nested_groups_count"] == 1     # subteam-nested@example.com
 
         # Verify nested group error was logged in errors array
         nested_errors = [e for e in result["errors"] if e["type"] == "NESTED_GROUP_UNSUPPORTED"]
         assert len(nested_errors) == 1
-        assert "subteam-nested@hoffhouse.com" in nested_errors[0]["item"]
+        assert "subteam-nested@example.com" in nested_errors[0]["item"]
         assert "Nested groups are not supported" in nested_errors[0]["error"]
 
         # Verify assign_license was called ONLY for Alice, never for the nested group
-        mock_client.assign_license.assert_called_once_with("Google-Apps", "101031", "alice@hoffhouse.com")
+        mock_client.assign_license.assert_called_once_with("Google-Apps", "101031", "alice@example.com")
 
 
 def test_sync_engine_empty_groups():
@@ -68,7 +68,7 @@ def test_sync_engine_empty_groups():
         "monitored_groups": [],
         "product_id": "Google-Apps",
         "sku_id": "101031",
-        "delegated_admin_email": "admin@hoffhouse.com"
+        "delegated_admin_email": "admin@example.com"
     }
 
     with patch("app.sync_worker.get_config", return_value=mock_config), \

@@ -1,19 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────────
+# Fill these in via terraform.tfvars, -var flags, or TF_VAR_* env vars.
+# Nothing here is tied to a specific GCP project or Workspace domain.
+# ─────────────────────────────────────────────────────────────────────────────────
+
 variable "project_id" {
-  description = "The GCP Project ID where resources will be provisioned."
+  description = "The GCP Project ID where resources will be provisioned. Required."
   type        = string
-  default     = "ge-hoffhouse"
+  # No default on purpose: set it explicitly so nothing environment-specific is baked in.
 }
 
 variable "region" {
-  description = "GCP Region for Cloud Run, Cloud Scheduler, and Artifact Registry."
+  description = "GCP region for Cloud Run, Cloud Scheduler, and Artifact Registry."
   type        = string
   default     = "us-central1"
 }
 
 variable "service_name" {
-  description = "Base name for Cloud Run and related services."
+  description = "Name of the Cloud Run service."
   type        = string
   default     = "gemini-license-provisioner"
+}
+
+variable "app_service_account_id" {
+  description = "Account ID (the part before '@') of the service account that runs Cloud Run and is impersonated by CI/CD."
+  type        = string
+  default     = "sa-gemini-provisioner"
+}
+
+variable "scheduler_service_account_id" {
+  description = "Account ID of the service account Cloud Scheduler uses to invoke the sync endpoint via OIDC."
+  type        = string
+  default     = "sa-scheduler-invoker"
+}
+
+variable "artifact_repository_id" {
+  description = "Artifact Registry repository ID that holds the container image."
+  type        = string
+  default     = "gemini-provisioner-docker"
+}
+
+variable "scheduler_job_name" {
+  description = "Name of the Cloud Scheduler job that triggers periodic license sync."
+  type        = string
+  default     = "gemini-license-sync-job"
 }
 
 variable "delegated_admin_email" {
@@ -41,13 +70,13 @@ variable "initial_cron_expression" {
 }
 
 variable "github_repo" {
-  description = "GitHub repository in 'owner/repo' format for Workload Identity Federation (e.g. 'my-org/gemini-license-provisioner')."
+  description = "GitHub repository in 'owner/repo' format for Workload Identity Federation (e.g. 'my-org/gemini-license-provisioner'). Leave empty to skip WIF resources."
   type        = string
   default     = ""
 }
 
 variable "container_image" {
-  description = "Docker container image URI for Cloud Run. Set during CI/CD deployment."
+  description = "Docker container image URI for Cloud Run. Overridden by CI/CD on each deploy."
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }

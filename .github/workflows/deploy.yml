@@ -10,11 +10,25 @@ permissions:
   id-token: write # Required for requesting the JWT for Workload Identity Federation
   contents: read  # Required for actions/checkout
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# Deployment configuration. Nothing here is environment-specific: set these as
+# GitHub Actions *repository variables* (Settings → Secrets and variables → Actions
+# → Variables). Secrets WIF_PROVIDER and WIF_SERVICE_ACCOUNT are required.
+#
+#   GCP_PROJECT_ID     (required) target GCP project
+#   GCP_REGION         (optional) default us-central1
+#   CLOUD_RUN_SERVICE  (optional) default gemini-license-provisioner
+#   ARTIFACT_REPO      (optional) default gemini-provisioner-docker
+#   CLOUD_SCHEDULER_JOB(optional) default gemini-license-sync-job
+#   DELEGATED_ADMIN_EMAIL (optional) delegated admin to impersonate; if unset,
+#                         configure it on the app's Settings page after deploy
+# ─────────────────────────────────────────────────────────────────────────────────
 env:
-  PROJECT_ID: ge-hoffhouse
-  REGION: us-central1
-  SERVICE_NAME: gemini-license-provisioner
-  REPOSITORY: gemini-provisioner-docker
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'gemini-license-provisioner' }}
+  REPOSITORY: ${{ vars.ARTIFACT_REPO || 'gemini-provisioner-docker' }}
+  SCHEDULER_JOB: ${{ vars.CLOUD_SCHEDULER_JOB || 'gemini-license-sync-job' }}
   IMAGE_NAME: provisioner
 
 jobs:
@@ -25,6 +39,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Validate configuration
+        run: |
+          if [ -z "${{ env.PROJECT_ID }}" ]; then
+            echo "::error::Repository variable GCP_PROJECT_ID is not set. See setup_instructions.md Step 5."
+            exit 1
+          fi
 
       - name: Authenticate to Google Cloud via Workload Identity Federation
         id: auth
@@ -49,12 +70,12 @@ jobs:
         run: |
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}"
           echo "Building container: ${IMAGE_URI}:${IMAGE_TAG}..."
-          
+
           docker build \
             -t "${IMAGE_URI}:${IMAGE_TAG}" \
             -t "${IMAGE_URI}:latest" \
             .
-            
+
           echo "Pushing image to Artifact Registry..."
           docker push "${IMAGE_URI}:${IMAGE_TAG}"
           docker push "${IMAGE_URI}:latest"
@@ -62,9 +83,15 @@ jobs:
       - name: Deploy to Cloud Run
         env:
           IMAGE_TAG: ${{ github.sha }}
+          DELEGATED_ADMIN_EMAIL: ${{ vars.DELEGATED_ADMIN_EMAIL }}
         run: |
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
-          
+
+          ENV_VARS="GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=${{ env.SCHEDULER_JOB }},RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}"
+          if [ -n "${DELEGATED_ADMIN_EMAIL}" ]; then
+            ENV_VARS="${ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
+          fi
+
           echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}'..."
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image "${IMAGE_URI}" \
@@ -73,7 +100,7 @@ jobs:
             --timeout 600 \
             --memory 1024Mi \
             --cpu 1 \
-            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=gemini-license-sync-job,RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}" \
+            --set-env-vars "${ENV_VARS}" \
             --allow-unauthenticated \
             --quiet
 
