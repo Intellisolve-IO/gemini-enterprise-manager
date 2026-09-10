@@ -30,6 +30,7 @@ permissions:
 #   NOTIFICATION_SENDER_EMAIL (optional) mailbox for run-notification emails
 #   PUBLIC_BASE_URL       (optional) https base URL for links in notification emails
 #   CLOUD_RUN_ALLOW_UNAUTH(optional) default 'true'; set 'false' after enabling IAP
+#   CLOUD_RUN_ENABLE_IAP  (optional) 'true' enables IAP, 'false' disables, unset = leave as-is
 # ─────────────────────────────────────────────────────────────────────────────────
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -101,6 +102,9 @@ jobs:
           # Set repo variable CLOUD_RUN_ALLOW_UNAUTH=false once IAP is enabled,
           # so CI stops re-opening the service on every deploy.
           ALLOW_UNAUTH: ${{ vars.CLOUD_RUN_ALLOW_UNAUTH || 'true' }}
+          # CLOUD_RUN_ENABLE_IAP: 'true' turns IAP on, 'false' turns it off,
+          # unset leaves the current IAP state untouched.
+          ENABLE_IAP: ${{ vars.CLOUD_RUN_ENABLE_IAP }}
         run: |
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
@@ -115,7 +119,10 @@ jobs:
 
           if [ "${ALLOW_UNAUTH}" = "false" ]; then AUTH_FLAG="--no-allow-unauthenticated"; else AUTH_FLAG="--allow-unauthenticated"; fi
 
-          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}' (${AUTH_FLAG})..."
+          IAP_FLAG=""
+          if [ "${ENABLE_IAP}" = "true" ]; then IAP_FLAG="--iap"; elif [ "${ENABLE_IAP}" = "false" ]; then IAP_FLAG="--no-iap"; fi
+
+          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}' (${AUTH_FLAG} ${IAP_FLAG})..."
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image "${IMAGE_URI}" \
             --region ${{ env.REGION }} \
@@ -124,7 +131,7 @@ jobs:
             --memory 1024Mi \
             --cpu 1 \
             --set-env-vars "${ENV_VARS}" \
-            ${AUTH_FLAG} \
+            ${AUTH_FLAG} ${IAP_FLAG} \
             --quiet
 
       - name: Output Service URL
