@@ -25,6 +25,10 @@ permissions:
 #   IAP_AUDIENCE          (optional) enables the in-app Workspace super-admin check
 #                         (set once IAP is turned on; see setup_instructions.md)
 #   SYNC_INVOKER_SA_EMAIL (optional) scheduler SA allowed through /api/sync/run when IAP is on
+#   AUTH_BOOTSTRAP_ADMINS (optional) comma-separated break-glass admin emails
+#   SUPER_ADMIN_CACHE_TTL (optional) seconds to cache the super-admin lookup (default 300)
+#   NOTIFICATION_SENDER_EMAIL (optional) mailbox for run-notification emails
+#   PUBLIC_BASE_URL       (optional) https base URL for links in notification emails
 #   CLOUD_RUN_ALLOW_UNAUTH(optional) default 'true'; set 'false' after enabling IAP
 # ─────────────────────────────────────────────────────────────────────────────────
 env:
@@ -90,6 +94,10 @@ jobs:
           DELEGATED_ADMIN_EMAIL: ${{ vars.DELEGATED_ADMIN_EMAIL }}
           IAP_AUDIENCE: ${{ vars.IAP_AUDIENCE }}
           SYNC_INVOKER_SA_EMAIL: ${{ vars.SYNC_INVOKER_SA_EMAIL }}
+          AUTH_BOOTSTRAP_ADMINS: ${{ vars.AUTH_BOOTSTRAP_ADMINS }}
+          SUPER_ADMIN_CACHE_TTL: ${{ vars.SUPER_ADMIN_CACHE_TTL }}
+          NOTIFICATION_SENDER_EMAIL: ${{ vars.NOTIFICATION_SENDER_EMAIL }}
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
           # Set repo variable CLOUD_RUN_ALLOW_UNAUTH=false once IAP is enabled,
           # so CI stops re-opening the service on every deploy.
           ALLOW_UNAUTH: ${{ vars.CLOUD_RUN_ALLOW_UNAUTH || 'true' }}
@@ -97,9 +105,13 @@ jobs:
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
           ENV_VARS="GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=${{ env.SCHEDULER_JOB }},RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}"
-          [ -n "${DELEGATED_ADMIN_EMAIL}" ]  && ENV_VARS="${ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
-          [ -n "${IAP_AUDIENCE}" ]           && ENV_VARS="${ENV_VARS},IAP_AUDIENCE=${IAP_AUDIENCE}"
-          [ -n "${SYNC_INVOKER_SA_EMAIL}" ]  && ENV_VARS="${ENV_VARS},SYNC_INVOKER_SA_EMAIL=${SYNC_INVOKER_SA_EMAIL}"
+          [ -n "${DELEGATED_ADMIN_EMAIL}" ]     && ENV_VARS="${ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
+          [ -n "${IAP_AUDIENCE}" ]              && ENV_VARS="${ENV_VARS},IAP_AUDIENCE=${IAP_AUDIENCE}"
+          [ -n "${SYNC_INVOKER_SA_EMAIL}" ]     && ENV_VARS="${ENV_VARS},SYNC_INVOKER_SA_EMAIL=${SYNC_INVOKER_SA_EMAIL}"
+          [ -n "${AUTH_BOOTSTRAP_ADMINS}" ]     && ENV_VARS="${ENV_VARS},AUTH_BOOTSTRAP_ADMINS=${AUTH_BOOTSTRAP_ADMINS}"
+          [ -n "${SUPER_ADMIN_CACHE_TTL}" ]     && ENV_VARS="${ENV_VARS},SUPER_ADMIN_CACHE_TTL=${SUPER_ADMIN_CACHE_TTL}"
+          [ -n "${NOTIFICATION_SENDER_EMAIL}" ] && ENV_VARS="${ENV_VARS},NOTIFICATION_SENDER_EMAIL=${NOTIFICATION_SENDER_EMAIL}"
+          [ -n "${PUBLIC_BASE_URL}" ]           && ENV_VARS="${ENV_VARS},PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
 
           if [ "${ALLOW_UNAUTH}" = "false" ]; then AUTH_FLAG="--no-allow-unauthenticated"; else AUTH_FLAG="--allow-unauthenticated"; fi
 
