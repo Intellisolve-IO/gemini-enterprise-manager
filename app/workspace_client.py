@@ -90,7 +90,7 @@ class WorkspaceClient:
             raise RuntimeError(
                 "Domain-Wide Delegation requires a concrete runtime service account email. "
                 "Set the RUNTIME_SERVICE_ACCOUNT_EMAIL environment variable to the Cloud Run "
-                "service account (e.g. sa-gemini-provisioner@<project>.iam.gserviceaccount.com)."
+                "service account (e.g. <sa-name>@<project-id>.iam.gserviceaccount.com)."
             )
 
         try:

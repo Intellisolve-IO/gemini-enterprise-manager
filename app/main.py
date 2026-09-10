@@ -35,6 +35,9 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Expose deployment identifiers to every template (shown in the header/footer).
+templates.env.globals["gcp_project_id"] = settings.GCP_PROJECT_ID or "unset"
+templates.env.globals["gcp_region"] = settings.GCP_REGION
 
 
 # -------------------------------------------------------------------------

@@ -5,8 +5,10 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Google Cloud Project Configuration
-    GCP_PROJECT_ID: str = "ge-hoffhouse"
-    GCP_REGION: str = "us-central1"
+    # GCP_PROJECT_ID has no usable default - set it via the GCP_PROJECT_ID env var
+    # (the deploy workflow and Terraform do this; export it locally for dev).
+    GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "")
+    GCP_REGION: str = os.getenv("GCP_REGION", "us-central1")
     
     # Google Workspace Configuration
     # Placeholder only - set DELEGATED_ADMIN_EMAIL (env var or the Settings page) to a

@@ -1,6 +1,6 @@
 # Gemini Enterprise License Provisioner for Google Workspace
 
-An automated, serverless solution deployed on Google Cloud Platform (`ge-hoffhouse`) that manages and provisions Gemini Enterprise (Standard Tier) licenses to Google Workspace domain users based on Google Groups membership.
+An automated, serverless solution on Google Cloud Platform that manages and provisions Gemini Enterprise (Standard Tier) licenses to Google Workspace domain users based on Google Groups membership. Deploy it to any GCP project / Workspace domain — see [setup_instructions.md](setup_instructions.md).
 
 ---
 
@@ -87,7 +87,7 @@ gemini-license-provisioner/
 │   ├── test_sync.py                # Unit test for sync logic & nested group handling
 │   └── test_api.py                 # FastAPI endpoint & view tests
 ├── scripts/
-│   └── setup_wif.sh                # Helper script to bootstrap WIF in GCP ge-hoffhouse
+│   └── setup_wif.sh                # Helper script to bootstrap WIF for your GCP project
 ├── setup_instructions.md           # Step-by-step setup (GCP, DWD scopes, WIF, GitHub)
 ├── Dockerfile                      # Cloud Run container definition
 ├── requirements.txt                # Lean Python dependencies
@@ -116,9 +116,9 @@ pytest tests/ -v
 ### 3. Run Application Locally
 
 ```bash
-export GCP_PROJECT_ID="ge-hoffhouse"
-export DELEGATED_ADMIN_EMAIL="workspace-admin@your-domain.com"  # a real, active admin user
-export RUNTIME_SERVICE_ACCOUNT_EMAIL="sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com"
+export GCP_PROJECT_ID="your-gcp-project-id"
+export DELEGATED_ADMIN_EMAIL="workspace-admin@your-domain.com"                 # a real, active admin user
+export RUNTIME_SERVICE_ACCOUNT_EMAIL="<sa-name>@<your-gcp-project-id>.iam.gserviceaccount.com"
 export PRODUCT_ID="Google-Apps"
 export SKU_ID="101031"
 
@@ -131,16 +131,18 @@ Visit `http://localhost:8080` to access the Admin Web UI.
 
 ## Deployment to GCP
 
-For complete, step-by-step instructions on enabling GCP APIs, configuring Google Workspace Domain-Wide Delegation (DWD), setting up Workload Identity Federation (WIF), and linking GitHub Actions, see [setup_instructions.md](setup_instructions.md).
+For complete, step-by-step instructions — filling in your own project, region, service
+account, and Workspace domain — see [setup_instructions.md](setup_instructions.md).
+[`EXAMPLE_DEPLOYMENT.md`](EXAMPLE_DEPLOYMENT.md) shows one set of values filled in end to end.
 
 ### Privileges required to deploy
 
-**Google Cloud** (operator, on project `ge-hoffhouse`): `roles/owner`, or the granular set of
+**Google Cloud** (operator, on your project): `roles/owner`, or the granular set of
 `serviceusage.serviceUsageAdmin`, `datastore.owner`, `iam.serviceAccountAdmin`,
 `resourcemanager.projectIamAdmin`, `run.admin`, `artifactregistry.admin`,
 `cloudscheduler.admin`, and `iam.workloadIdentityPoolAdmin`.
 
-**Google Cloud** (the `sa-gemini-provisioner` service account, runtime + CI/CD):
+**Google Cloud** (the app service account, used for both runtime and CI/CD):
 `datastore.user`, `cloudscheduler.admin`, `logging.logWriter`, `run.admin`,
 `artifactregistry.admin`, `iam.serviceAccountUser`, and
 `iam.serviceAccountTokenCreator` **on itself** (for keyless DWD).
@@ -150,3 +152,10 @@ real, active, licensed delegated-admin user for the service to impersonate (with
 read and license-management privileges — Super Admin covers these).
 
 Full breakdown with per-role rationale: [setup_instructions.md → Required Privileges](setup_instructions.md#required-privileges).
+
+### Security model
+
+The web UI and every `/api/*` endpoint deploy **public and unauthenticated**
+(`--allow-unauthenticated` + `allUsers` invoker). Anyone with the URL can change
+settings and trigger license assignment. Put IAP or IAM invoker auth in front before
+production use — see [setup_instructions.md → Security Model](setup_instructions.md#security-model).

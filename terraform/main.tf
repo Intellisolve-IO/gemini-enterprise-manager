@@ -43,7 +43,7 @@ resource "google_project_service" "apis" {
 resource "google_artifact_registry_repository" "docker_repo" {
   depends_on    = [google_project_service.apis]
   location      = var.region
-  repository_id = "gemini-provisioner-docker"
+  repository_id = var.artifact_repository_id
   description   = "Docker repository for Gemini Enterprise license provisioner"
   format        = "DOCKER"
 }
@@ -54,7 +54,7 @@ resource "google_artifact_registry_repository" "docker_repo" {
 
 # Application Service Account (Cloud Run)
 resource "google_service_account" "app_sa" {
-  account_id   = "sa-gemini-provisioner"
+  account_id   = var.app_service_account_id
   display_name = "Gemini License Provisioner Application Service Account"
   description  = "Runs Cloud Run service, manages Firestore config, and calls Workspace APIs via DWD"
 }
@@ -92,7 +92,7 @@ resource "google_service_account_iam_member" "sa_token_creator_self" {
 
 # Cloud Scheduler Invoker Service Account
 resource "google_service_account" "scheduler_sa" {
-  account_id   = "sa-scheduler-invoker"
+  account_id   = var.scheduler_service_account_id
   display_name = "Cloud Scheduler Invoker Service Account"
   description  = "Used by Cloud Scheduler to invoke the /api/sync/run endpoint with OIDC auth"
 }
@@ -155,7 +155,7 @@ resource "google_cloud_run_v2_service" "provisioner" {
       }
       env {
         name  = "CLOUD_SCHEDULER_JOB_NAME"
-        value = "gemini-license-sync-job"
+        value = var.scheduler_job_name
       }
       env {
         name  = "CLOUD_SCHEDULER_LOCATION"
@@ -187,7 +187,10 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
   member   = "serviceAccount:${google_service_account.scheduler_sa.email}"
 }
 
-# Note: For admin web UI access, allow allUsers or bind to internal corporate identities/IAP
+# WARNING: this makes the admin UI and every /api/* endpoint public and
+# unauthenticated. See "Security Model" in setup_instructions.md. For real use,
+# remove this resource and either enable IAP or grant roles/run.invoker to
+# specific users/groups plus the scheduler service account.
 resource "google_cloud_run_v2_service_iam_member" "public_access" {
   location = google_cloud_run_v2_service.provisioner.location
   name     = google_cloud_run_v2_service.provisioner.name
@@ -200,7 +203,7 @@ resource "google_cloud_run_v2_service_iam_member" "public_access" {
 # -----------------------------------------------------------------------------
 resource "google_cloud_scheduler_job" "sync_job" {
   depends_on  = [google_project_service.apis, google_cloud_run_v2_service.provisioner]
-  name        = "gemini-license-sync-job"
+  name        = var.scheduler_job_name
   description = "Triggers Google Workspace Gemini license provisioning based on Google Groups"
   schedule    = var.initial_cron_expression
   time_zone   = "UTC"

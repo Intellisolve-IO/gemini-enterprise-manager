@@ -1,16 +1,54 @@
 # Setup Instructions: Google Workspace Gemini Enterprise License Provisioner
 
-This guide details step-by-step instructions to configure Google Cloud Platform (`ge-hoffhouse`), Google Workspace Domain-Wide Delegation (DWD), Workload Identity Federation (WIF), and GitHub Actions.
+Step-by-step setup for Google Cloud, Google Workspace Domain-Wide Delegation (DWD),
+Workload Identity Federation (WIF), and GitHub Actions.
+
+Every command below uses shell variables for the values that are specific to **your**
+deployment. Nothing in this repo is tied to a particular GCP project or Workspace
+domain — see [`EXAMPLE_DEPLOYMENT.md`](EXAMPLE_DEPLOYMENT.md) for one filled-in example.
+
+---
+
+## 0. Fill in your values
+
+Set these once in your shell; the rest of the guide references them.
+
+```bash
+# ── GCP ────────────────────────────────────────────────────────────────────────
+export PROJECT_ID="your-gcp-project-id"            # GCP project to deploy into
+export REGION="us-central1"                        # region for Cloud Run / Artifact Registry / Scheduler
+export SA_NAME="sa-gemini-provisioner"             # name for the app + CI/CD service account (created below)
+export ARTIFACT_REPO="gemini-provisioner-docker"   # Artifact Registry repository name
+export SERVICE_NAME="gemini-license-provisioner"   # Cloud Run service name
+export SCHEDULER_JOB="gemini-license-sync-job"     # Cloud Scheduler job name
+
+# ── GitHub ────────────────────────────────────────────────────────────────────
+export GITHUB_REPO="your-org/your-repo"            # repo that hosts this code (used by WIF)
+
+# ── Google Workspace ──────────────────────────────────────────────────────────
+export WORKSPACE_DOMAIN="your-domain.com"          # your Workspace primary domain
+export DELEGATED_ADMIN_EMAIL="workspace-admin@${WORKSPACE_DOMAIN}"  # REAL, active, licensed admin user to impersonate
+
+# ── Derived (do not edit) ─────────────────────────────────────────────────────
+export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud auth login
+gcloud config set project "${PROJECT_ID}"
+```
+
+> `DELEGATED_ADMIN_EMAIL` **must resolve to an existing user** in your Workspace
+> tenant. A made-up address fails at sync time with
+> `invalid_grant: Invalid email or User ID`.
 
 ---
 
 ## Prerequisites
 
-1. **GCP Project**: `ge-hoffhouse`, with billing enabled and an operator identity that holds the roles listed under [Required Privileges](#required-privileges).
-2. **Google Workspace / Cloud Identity**: a tenant on the domain you intend to license (for example `your-domain.com`), plus a **Super Admin** account in that tenant to configure Domain-Wide Delegation.
-3. **A dedicated delegated-admin user** in that Workspace tenant for the service to impersonate — a real, licensed account such as `workspace-admin@your-domain.com`. It must not be a made-up address; the sync fails with `invalid_grant: Invalid email or User ID` if the user does not exist.
-4. **GitHub**: a repository for the code (`<YOUR-GITHUB-USERNAME>/gemini-license-provisioner`) with permission to add Actions secrets.
-5. **Local tooling**: `gcloud` CLI authenticated to `ge-hoffhouse` (`gcloud auth login && gcloud config set project ge-hoffhouse`), and `git`.
+1. **GCP project** `${PROJECT_ID}` with billing enabled, and an operator identity holding the roles under [Required Privileges](#required-privileges).
+2. **Google Workspace / Cloud Identity** tenant on `${WORKSPACE_DOMAIN}`, plus a **Super Admin** account to configure Domain-Wide Delegation.
+3. **A dedicated delegated-admin user** (`${DELEGATED_ADMIN_EMAIL}`) — real, active, licensed — for the service to impersonate.
+4. **GitHub repository** `${GITHUB_REPO}` with permission to add Actions secrets and variables.
+5. **Local tooling**: `gcloud` and `git`.
 
 ---
 
@@ -18,7 +56,7 @@ This guide details step-by-step instructions to configure Google Cloud Platform 
 
 ### Google Cloud — operator (the person running Steps 1–5)
 
-Granted on project `ge-hoffhouse`. Either `roles/owner`, or this least-privilege set:
+Granted on project `${PROJECT_ID}`. Either `roles/owner`, or this least-privilege set:
 
 | Role | Needed for |
 | :--- | :--- |
@@ -28,13 +66,14 @@ Granted on project `ge-hoffhouse`. Either `roles/owner`, or this least-privilege
 | `roles/resourcemanager.projectIamAdmin` | Grant project roles to the service account (Steps 3, 5) |
 | `roles/artifactregistry.admin` | Create the Docker repository (Terraform / first deploy) |
 | `roles/run.admin` | Create the Cloud Run service (first deploy) |
-| `roles/iam.serviceAccountUser` on `sa-gemini-provisioner@…` | Deploy Cloud Run "acting as" the runtime service account |
+| `roles/iam.serviceAccountUser` on the runtime service account | Deploy Cloud Run "acting as" that account |
 | `roles/cloudscheduler.admin` | Create the Cloud Scheduler job |
 | `roles/iam.workloadIdentityPoolAdmin` | Create the WIF pool/provider (Step 5) |
 
-### Google Cloud — `sa-gemini-provisioner` service account (runtime **and** CI/CD)
+### Google Cloud — the app service account `${SA_NAME}@${PROJECT_ID}` (runtime **and** CI/CD)
 
-This one service account both runs the Cloud Run service and is the identity GitHub Actions impersonates to deploy. Steps 3 and 5 (`scripts/setup_wif.sh`) grant it:
+One service account both runs the Cloud Run service and is the identity GitHub Actions
+impersonates to deploy. Steps 3 and 5 (`scripts/setup_wif.sh`) grant it:
 
 | Role | Scope | Purpose |
 | :--- | :--- | :--- |
@@ -46,23 +85,26 @@ This one service account both runs the Cloud Run service and is the identity Git
 | `roles/iam.serviceAccountUser` | on itself | GitHub Actions deploys Cloud Run as this account |
 | `roles/artifactregistry.admin` | project | GitHub Actions pushes container images |
 
-> For a stricter setup, split deployment onto a separate CI service account holding only `run.admin`, `artifactregistry.writer`, and `iam.serviceAccountUser` on the runtime account, and drop `run.admin` / `artifactregistry.admin` / `iam.serviceAccountUser` from `sa-gemini-provisioner`.
+> For a stricter setup, split deployment onto a separate CI service account holding only
+> `run.admin`, `artifactregistry.writer`, and `iam.serviceAccountUser` on the runtime
+> account, and drop `run.admin` / `artifactregistry.admin` / `iam.serviceAccountUser`
+> from the runtime account.
 
 ### Google Workspace
 
 | Privilege | Held by | Needed for |
 | :--- | :--- | :--- |
 | **Super Admin** (one-time) | the admin doing Step 4 | Add the Domain-Wide Delegation entry in the Admin Console. DWD cannot be delegated to a custom admin role. |
-| Admin roles: **Groups → Read**, **Users → Read**, and license management (Super Admin covers all three) | the delegated-admin user the app impersonates (`workspace-admin@your-domain.com`) | The app calls Admin SDK Directory (`admin.directory.group.readonly`, `admin.directory.user.readonly`) and Enterprise License Manager (`apps.licensing`) **as this user** |
+| Admin roles: **Groups → Read**, **Users → Read**, and license management (Super Admin covers all three) | the delegated-admin user (`${DELEGATED_ADMIN_EMAIL}`) | The app calls Admin SDK Directory (`admin.directory.group.readonly`, `admin.directory.user.readonly`) and Enterprise License Manager (`apps.licensing`) **as this user** |
 | An assignable **Gemini Enterprise** SKU with available seats | the Workspace tenant | Licenses to hand out during sync |
 
-The delegated-admin user must be **active** (not suspended) and licensed. A Super Admin account is the simplest choice; a custom admin role works only if it grants the Directory read and licensing privileges above.
+The delegated-admin user must be **active** (not suspended) and licensed. A Super Admin
+account is the simplest choice; a custom admin role works only if it grants the Directory
+read and licensing privileges above.
 
 ---
 
 ## Step 1: Enable Required Google Cloud APIs
-
-Run the following command using `gcloud` authenticated to `ge-hoffhouse`:
 
 ```bash
 gcloud services enable \
@@ -75,38 +117,35 @@ gcloud services enable \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
   cloudbuild.googleapis.com \
-  --project="ge-hoffhouse"
+  --project="${PROJECT_ID}"
 ```
 
 ---
 
 ## Step 2: Initialize Cloud Firestore in Native Mode
 
-If Cloud Firestore is not yet activated in `ge-hoffhouse`:
+If Firestore is not yet active in `${PROJECT_ID}`:
 
-1. In the Google Cloud Console, navigate to **Firestore Studio**.
+1. In the Google Cloud Console, open **Firestore**.
 2. Click **Create Database**.
 3. Select **Firestore Native mode**.
-4. Choose region `us-central1` (or your preferred region) and name `(default)`.
+4. Choose a location (use `${REGION}` or your preference) and database id `(default)`.
 5. Click **Create Database**.
 
 ---
 
-## Step 3: Create Service Account & Grant GCP Roles
+## Step 3: Create the Service Account & Grant GCP Roles
 
-Create the dedicated `sa-gemini-provisioner` service account. It is the single
-account that both **runs** the Cloud Run service and is impersonated by
-**GitHub Actions** to deploy it; see [Required Privileges](#required-privileges)
-for the rationale behind each role. `scripts/setup_wif.sh` (Step 5) applies the
-same project-level bindings, so you can skip straight to Step 5 if you use it.
+This one account both **runs** the Cloud Run service and is impersonated by
+**GitHub Actions** to deploy it; see [Required Privileges](#required-privileges) for
+the rationale behind each role. `scripts/setup_wif.sh` (Step 5) applies the same
+project-level bindings, so you can skip straight to Step 5 if you use it.
 
 ```bash
-SA="sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com"
-
-# Create Service Account
-gcloud iam service-accounts create sa-gemini-provisioner \
+# Create the service account
+gcloud iam service-accounts create "${SA_NAME}" \
   --display-name="Gemini License Provisioner Service Account" \
-  --project="ge-hoffhouse"
+  --project="${PROJECT_ID}"
 
 # Project-level roles (runtime + CI/CD deploy)
 for ROLE in \
@@ -117,51 +156,49 @@ for ROLE in \
   roles/artifactregistry.admin \
   roles/iam.serviceAccountUser
 do
-  gcloud projects add-iam-policy-binding ge-hoffhouse \
-    --member="serviceAccount:${SA}" --role="${ROLE}" --condition=None
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SA_EMAIL}" --role="${ROLE}" --condition=None
 done
 
-# Allow the Service Account to mint signed JWTs as itself (keyless Domain-Wide
-# Delegation). Without this the deployed service authenticates as the bare
-# Service Account and the Directory API returns "404: Domain not found" on the
-# Test Connection button.
-gcloud iam service-accounts add-iam-policy-binding "${SA}" \
-  --member="serviceAccount:${SA}" \
+# Allow the service account to mint signed JWTs as itself (keyless Domain-Wide
+# Delegation). Without this the deployed service authenticates as the bare service
+# account and the Directory API returns "404: Domain not found" on Test Connection.
+gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+  --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/iam.serviceAccountTokenCreator" \
-  --project="ge-hoffhouse"
+  --project="${PROJECT_ID}"
 ```
 
-> **Runtime environment variables.** The Cloud Run service needs:
-> - `RUNTIME_SERVICE_ACCOUNT_EMAIL=sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com`
->   — required for keyless DWD.
-> - `DELEGATED_ADMIN_EMAIL=workspace-admin@your-domain.com` — the delegated-admin
->   user to impersonate (can also be set later from the **Settings** page).
+> **Runtime environment variables** the Cloud Run service needs:
+> - `RUNTIME_SERVICE_ACCOUNT_EMAIL` = the service account email (`${SA_EMAIL}`) — required for keyless DWD.
+> - `DELEGATED_ADMIN_EMAIL` = `${DELEGATED_ADMIN_EMAIL}` — the user to impersonate (can also be set later from the **Settings** page).
+> - `GCP_PROJECT_ID`, `GCP_REGION` — your project and region.
 >
-> The Terraform config and the GitHub Actions workflow set `RUNTIME_SERVICE_ACCOUNT_EMAIL`
-> automatically; if you run `gcloud run deploy` by hand, pass both in `--set-env-vars`.
+> Terraform and the GitHub Actions workflow set these for you. If you run
+> `gcloud run deploy` by hand, pass them all in `--set-env-vars`.
 
-Retrieve the **Unique Numeric Client ID** of the Service Account (needed for Step 4):
+Retrieve the service account's **Unique Numeric Client ID** (needed for Step 4):
 
 ```bash
-gcloud iam service-accounts describe sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com \
-  --project="ge-hoffhouse" \
+gcloud iam service-accounts describe "${SA_EMAIL}" \
+  --project="${PROJECT_ID}" \
   --format="value(uniqueId)"
 ```
-*Note down this numeric ID (e.g., `108392019482019482019`).*
+*Note down this numeric ID (a ~21-digit number).*
 
 ---
 
 ## Step 4: Authorize Domain-Wide Delegation (DWD) in Google Workspace
 
-To allow the Service Account to read Google Groups and assign Gemini licenses to users in your domain:
+Lets the service account read Google Groups and assign Gemini licenses to users in
+`${WORKSPACE_DOMAIN}`:
 
-1. Log into the [Google Admin Console](https://admin.google.com) as a Super Administrator.
-2. In the left navigation menu, go to:
-   **Security** &gt; **Access and data control** &gt; **API controls**.
+1. Sign in to the [Google Admin Console](https://admin.google.com) as a **Super Administrator**.
+2. Go to **Security** &gt; **Access and data control** &gt; **API controls**.
 3. Under **Domain-wide delegation**, click **Manage Domain Wide Delegation**.
 4. Click **Add new**.
-5. In the **Client ID** field, paste the **Unique Numeric Client ID** retrieved in Step 3.
-6. In the **OAuth Scopes** field, paste the following comma-delimited scopes:
+5. **Client ID**: paste the Unique Numeric Client ID from Step 3.
+6. **OAuth Scopes** (comma-delimited):
    ```text
    https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing
    ```
@@ -171,66 +208,103 @@ To allow the Service Account to read Google Groups and assign Gemini licenses to
 
 ## Step 5: Configure Workload Identity Federation (WIF) for GitHub Actions
 
-WIF eliminates the need to export static private keys to GitHub Secrets.
-
-Run the provided setup script with your new GitHub repository name:
+WIF lets GitHub Actions deploy without a long-lived service-account key.
 
 ```bash
 cd gemini-license-provisioner
-bash scripts/setup_wif.sh <YOUR-GITHUB-USERNAME>/gemini-license-provisioner
+PROJECT_ID="${PROJECT_ID}" SA_NAME="${SA_NAME}" REGION="${REGION}" \
+  bash scripts/setup_wif.sh "${GITHUB_REPO}"
 ```
 
 `setup_wif.sh` creates the service account (if missing), applies the project-level
 roles from Step 3, grants `roles/iam.serviceAccountTokenCreator` on the account to
 itself, and creates the Workload Identity pool/provider.
 
-The script will output two values. Add them to your GitHub repository under **Settings** &gt; **Secrets and variables** &gt; **Actions** &gt; **Repository secrets**:
+It prints two values. Add them under **GitHub → Settings → Secrets and variables →
+Actions → Repository secrets**:
 
-| Secret Name | Value Example |
+| Secret | Value |
 | :--- | :--- |
-| `WIF_PROVIDER` | `projects/1234567890/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider` |
-| `WIF_SERVICE_ACCOUNT` | `sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com` |
+| `WIF_PROVIDER` | `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider` |
+| `WIF_SERVICE_ACCOUNT` | the service account email (`${SA_EMAIL}`) |
+
+Then add the deployment **Repository variables** (same screen, **Variables** tab) — the
+workflow reads these so nothing environment-specific is committed:
+
+| Variable | Value | Default if unset |
+| :--- | :--- | :--- |
+| `GCP_PROJECT_ID` | `${PROJECT_ID}` | *(required)* |
+| `GCP_REGION` | `${REGION}` | `us-central1` |
+| `CLOUD_RUN_SERVICE` | `${SERVICE_NAME}` | `gemini-license-provisioner` |
+| `ARTIFACT_REPO` | `${ARTIFACT_REPO}` | `gemini-provisioner-docker` |
+| `CLOUD_SCHEDULER_JOB` | `${SCHEDULER_JOB}` | `gemini-license-sync-job` |
+| `DELEGATED_ADMIN_EMAIL` | `${DELEGATED_ADMIN_EMAIL}` | *(unset — set it on the Settings page instead)* |
 
 ---
 
-## Step 6: Create GitHub Repository & Push Code
-
-Initialize your new repository in GitHub:
+## Step 6: Push Code to Trigger Deployment
 
 ```bash
 cd gemini-license-provisioner
-
-git init
-git add .
-git commit -m "Initial commit: Gemini Enterprise automated license provisioner"
-git branch -M main
-
-# Add your GitHub remote URL
-git remote add origin https://github.com/<YOUR-GITHUB-USERNAME>/gemini-license-provisioner.git
-git push -u origin main
+git remote add origin "https://github.com/${GITHUB_REPO}.git"   # if not already set
+git push origin main
 ```
 
-Upon pushing to `main`, the GitHub Actions workflow (`.github/workflows/deploy.yml`) will automatically trigger, build the Docker container, push to Artifact Registry, and deploy the service to Cloud Run.
+Pushing to `main` runs `.github/workflows/deploy.yml`: build the image, push it to
+Artifact Registry, and deploy to Cloud Run.
 
 ---
 
-## Step 7: Initial Configuration in Admin Dashboard
+## Step 7: Initial Configuration in the Admin Dashboard
 
-Once deployed:
-
-1. Open the public Cloud Run URL printed in GitHub Actions or GCP Console.
-2. Navigate to **Settings &amp; Test**:
-   - Set the **Delegated Admin Email** to your real delegated-admin user
-     (e.g. `workspace-admin@your-domain.com`) and **Save**.
+1. Open the Cloud Run URL printed at the end of the workflow (or from the GCP Console).
+2. **Settings &amp; Test**:
+   - Set **Delegated Admin Email** to `${DELEGATED_ADMIN_EMAIL}` and **Save**.
    - Confirm **Product ID** (`Google-Apps` or `101047`) and **SKU ID** (`101031` or `1010470001`).
-   - Click **Test Connection** to confirm DWD connectivity.
-3. Navigate to **Monitored Groups**:
-   - Check the Google Groups you want to track.
-   - Click **Save Monitored Groups**.
-4. Navigate to **Sync Schedule**:
-   - Confirm or update the cron frequency (e.g. Daily at 2 AM or Hourly).
-   - Click **Update Cloud Scheduler**.
-5. Click **Run Sync Now** to execute your first automated provisioning cycle!
+   - Click **Test Connection**.
+3. **Monitored Groups**: select the Google Groups to track, then **Save**.
+4. **Sync Schedule**: confirm/adjust the cron frequency, then **Update Cloud Scheduler**.
+5. Click **Run Sync Now** for the first provisioning cycle.
+
+---
+
+## Security Model
+
+**As shipped, the web UI and every `/api/*` endpoint are public.** The deploy uses
+`--allow-unauthenticated` and Terraform binds `roles/run.invoker` to `allUsers`, and
+the application performs **no authentication or authorization** of its own. Anyone who
+knows the Cloud Run URL can:
+
+- read and change all settings (delegated admin, product/SKU, monitored groups, schedule);
+- trigger `POST /api/sync/run`, which assigns paid licenses to every member of the
+  monitored groups.
+
+DWD credentials are never exposed to the browser (they are minted server-side from the
+runtime service account), but the **ability to drive them** is fully exposed through the
+open API. The `/api/sync/run` handler inspects the `Authorization` / `User-Agent`
+headers only to *label* the run; it does not enforce them.
+
+**Before using this for real, put an identity layer in front of it.** Options, roughly
+in order of preference:
+
+1. **Identity-Aware Proxy (IAP)** on the Cloud Run service — best for an admin UI.
+   Remove `--allow-unauthenticated`, enable IAP, and grant
+   `roles/iap.httpsResourceAccessor` to the specific users or a Google Group. Browser
+   SSO "just works"; no app changes.
+2. **Require IAM invoker auth** — drop `allUsers`, grant `roles/run.invoker` only to
+   named users and to the Cloud Scheduler service account. Keep the scheduler job's
+   `oidc_token` (already configured in `terraform/main.tf`). Browser access then needs
+   an identity token (e.g. via IAP or `gcloud run services proxy`).
+3. **App-level checks** — verify the IAP assertion header
+   (`X-Goog-IAP-JWT-Assertion`) or, at minimum, enforce a valid Cloud Scheduler OIDC
+   token (audience + service-account email) on `POST /api/sync/run` so the money-moving
+   endpoint is not open even if the UI is.
+4. **Network limits** — set Cloud Run `ingress` to `internal-and-cloud-load-balancing`
+   and reach the UI through an internal load balancer / VPN.
+
+Also review: the runtime service account is highly privileged (it can deploy Cloud Run
+and impersonate itself for DWD); scope it down per the split-CI note above if you do not
+need in-place deploys from the same identity.
 
 ---
 
@@ -238,29 +312,25 @@ Once deployed:
 
 ### Test Connection returns `API Error (404): Domain not found.`
 
-The service reached Google but called the Directory API as the bare runtime Service
-Account instead of impersonating a Workspace admin. Check, in order:
+The service reached Google but called the Directory API as the bare runtime service
+account instead of impersonating a Workspace admin. Check, in order:
 
-1. **`roles/iam.serviceAccountTokenCreator` on the SA itself** (Step 3, last command).
-2. **`RUNTIME_SERVICE_ACCOUNT_EMAIL`** is set on the Cloud Run service and matches the
-   attached Service Account.
-3. **`iamcredentials.googleapis.com`** is enabled (Step 1).
-4. The **Delegated Admin Email** domain is a real Google Workspace / Cloud Identity
-   domain, and that user is an **active super administrator**.
-5. The Domain-Wide Delegation entry (Step 4) uses the SA's **numeric client ID** with
-   all three scopes.
+1. `roles/iam.serviceAccountTokenCreator` on the service account **to itself** (Step 3).
+2. `RUNTIME_SERVICE_ACCOUNT_EMAIL` is set on the Cloud Run service and matches the attached service account.
+3. `iamcredentials.googleapis.com` is enabled (Step 1).
+4. The **Delegated Admin Email** domain is a real Workspace / Cloud Identity domain and the user is an **active super administrator**.
+5. The DWD entry (Step 4) uses the service account's **numeric client ID** with all three scopes.
 
 Once impersonation works but privileges are wrong, the error changes to `401
-unauthorized_client` or `403` - that points at Step 4 or the admin user's role.
+unauthorized_client` / `403` — that points at Step 4 or the admin user's role.
 
 ### Test Connection returns `invalid_grant: Invalid email or User ID`
 
-Impersonation is working, but the **Delegated Admin Email** is not a real user in
-the Workspace tenant. Set it (on the **Settings** page or via `DELEGATED_ADMIN_EMAIL`)
-to an active, licensed admin account on your actual domain and save.
+Impersonation works, but **Delegated Admin Email** is not a real user in the tenant.
+Set it (Settings page or `DELEGATED_ADMIN_EMAIL`) to an active, licensed admin account
+on your domain and save.
 
 ### Test Connection returns `403` / `unauthorized_client`
 
-The Domain-Wide Delegation entry (Step 4) is missing, uses the wrong client ID, or
-lacks one of the three scopes. Re-check it against the SA's numeric client ID from
-Step 3.
+The DWD entry (Step 4) is missing, has the wrong client ID, or lacks one of the three
+scopes. Re-check it against the numeric client ID from Step 3.

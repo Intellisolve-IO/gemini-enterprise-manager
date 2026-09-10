@@ -20,10 +20,10 @@ def test_healthz():
 def test_dashboard_route():
     """Verify dashboard renders HTML."""
     mock_config = {
-        "monitored_groups": ["team@hoffhouse.com"],
+        "monitored_groups": ["team@example.com"],
         "product_id": "Google-Apps",
         "sku_id": "101031",
-        "delegated_admin_email": "admin@hoffhouse.com",
+        "delegated_admin_email": "admin@example.com",
         "cron_expression": "0 2 * * *"
     }
     with patch("app.main.get_config", return_value=mock_config), \
@@ -31,7 +31,7 @@ def test_dashboard_route():
         response = client.get("/")
         assert response.status_code == 200
         assert "Gemini License Provisioning Dashboard" in response.text
-        assert "team@hoffhouse.com" in response.text
+        assert "team@example.com" in response.text
 
 
 def test_api_save_groups():

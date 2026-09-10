@@ -1,17 +1,27 @@
-# GCP Project and Region
-project_id = "ge-hoffhouse"
+# Copy to terraform.tfvars and fill in. Only project_id is required.
+
+# ── GCP ───────────────────────────────────────────────────────────────────────
+project_id = "your-gcp-project-id"
 region     = "us-central1"
 
-# Google Workspace Domain Settings
+# ── Google Workspace ─────────────────────────────────────────────────────────
 # Must be a real, active, licensed admin user in your Workspace tenant.
 delegated_admin_email = "workspace-admin@your-domain.com"
 
-# License Targeting (Google-Apps / 101031 or 101047 / 1010470001)
+# License targeting (Google-Apps / 101031, or 101047 / 1010470001)
 product_id = "Google-Apps"
 sku_id     = "101031"
 
-# Cloud Scheduler Frequency (UTC)
-initial_cron_expression = "0 2 * * *"
+# ── Cloud Scheduler ─────────────────────────────────────────────────────────
+initial_cron_expression = "0 2 * * *"   # UTC
 
-# GitHub Repository for WIF (e.g., "my-org/gemini-license-provisioner")
-github_repo = "<YOUR-GITHUB-USERNAME>/gemini-license-provisioner"
+# ── GitHub (Workload Identity Federation) ───────────────────────────────────
+# Leave "" to skip creating WIF resources.
+github_repo = "my-org/gemini-license-provisioner"
+
+# ── Optional resource names (defaults shown; override only if you must) ──────
+# service_name                = "gemini-license-provisioner"
+# app_service_account_id       = "sa-gemini-provisioner"
+# scheduler_service_account_id = "sa-scheduler-invoker"
+# artifact_repository_id       = "gemini-provisioner-docker"
+# scheduler_job_name           = "gemini-license-sync-job"

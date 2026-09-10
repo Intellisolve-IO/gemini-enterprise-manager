@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # setup_wif.sh
-# One-time setup script for Google Cloud Workload Identity Federation (WIF)
-# Allows GitHub Actions to deploy to GCP 'ge-hoffhouse' securely without keys.
+# One-time setup for Google Cloud Workload Identity Federation (WIF) so GitHub
+# Actions can deploy without a long-lived service-account key.
+#
+# Configure via environment variables (all optional except the GitHub repo arg):
+#   PROJECT_ID   GCP project id           (default: gcloud config value)
+#   SA_NAME      app/CI service account   (default: sa-gemini-provisioner)
+#   REGION       GCP region               (default: us-central1)
+#   POOL_NAME / PROVIDER_NAME             (defaults: github-actions-pool / github-provider)
+#
+# Usage: PROJECT_ID=my-proj bash scripts/setup_wif.sh <github-owner>/<repo>
 # ==============================================================================
 
 set -euo pipefail
 
-PROJECT_ID="ge-hoffhouse"
-POOL_NAME="github-actions-pool"
-PROVIDER_NAME="github-provider"
-SA_NAME="sa-gemini-provisioner"
-REGION="us-central1"
+PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
+POOL_NAME="${POOL_NAME:-github-actions-pool}"
+PROVIDER_NAME="${PROVIDER_NAME:-github-provider}"
+SA_NAME="${SA_NAME:-sa-gemini-provisioner}"
+REGION="${REGION:-us-central1}"
+
+if [ -z "${PROJECT_ID}" ] || [ "${PROJECT_ID}" = "(unset)" ]; then
+  echo "Error: set PROJECT_ID (env var) or run 'gcloud config set project <id>' first."
+  exit 1
+fi
 
 echo "==================================================================="
 echo "Configuring Workload Identity Federation for GCP Project: ${PROJECT_ID}"
@@ -19,7 +32,7 @@ echo "==================================================================="
 
 # 1. Ask for GitHub repo if not provided
 if [ -z "${1:-}" ]; then
-  read -rp "Enter your GitHub repository (format: owner/repo, e.g. my-org/gemini-license-provisioner): " GITHUB_REPO
+  read -rp "Enter your GitHub repository (format: owner/repo): " GITHUB_REPO
 else
   GITHUB_REPO="$1"
 fi
@@ -132,6 +145,11 @@ echo "    ${PROVIDER_RESOURCE_ID}"
 echo ""
 echo " 2. WIF_SERVICE_ACCOUNT:"
 echo "    ${SA_EMAIL}"
+echo ""
+echo " Also add repository VARIABLES (same screen, Variables tab):"
+echo "    GCP_PROJECT_ID=${PROJECT_ID}"
+echo "    GCP_REGION=${REGION}"
+echo "    (see setup_instructions.md Step 5 for the full optional list)"
 echo ""
 echo "-------------------------------------------------------------------"
 echo "Google Workspace Domain-Wide Delegation (DWD) Info:"
