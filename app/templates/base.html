@@ -67,6 +67,11 @@
                     <button id="nav-sync-btn" onclick="triggerManualSync()" class="inline-flex items-center px-3.5 py-1.5 border border-transparent text-xs font-semibold rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
                         <i class="fa-solid fa-arrows-rotate mr-1.5"></i> Run Sync Now
                     </button>
+                    {% if principal %}
+                    <span class="hidden sm:inline-flex items-center text-xs text-slate-500" title="Signed in via Identity-Aware Proxy (Workspace super admin)">
+                        <i class="fa-solid fa-user-shield mr-1.5 text-slate-400"></i>{{ principal }}
+                    </span>
+                    {% endif %}
                     <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
                         <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> {{ gcp_project_id }}
                     </span>

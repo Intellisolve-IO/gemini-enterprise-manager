@@ -300,41 +300,73 @@ the run, but never fail the sync itself.
 
 ## Security Model
 
-**As shipped, the web UI and every `/api/*` endpoint are public.** The deploy uses
-`--allow-unauthenticated` and Terraform binds `roles/run.invoker` to `allUsers`, and
-the application performs **no authentication or authorization** of its own. Anyone who
-knows the Cloud Run URL can:
+Access control has two layers, both required once enabled:
 
-- read and change all settings (delegated admin, product/SKU, monitored groups, schedule);
-- trigger `POST /api/sync/run`, which assigns paid licenses to every member of the
-  monitored groups.
+1. **Identity-Aware Proxy (IAP)** authenticates the browser (Google SSO) and forwards a
+   signed `x-goog-iap-jwt-assertion` header. IAP IAM (`roles/iap.httpsResourceAccessor`)
+   is deliberately broad (the whole Workspace domain by default).
+2. **The application** verifies that assertion against Google's public keys and the
+   configured audience, extracts the email, and calls the Directory API (via the same
+   DWD client used for provisioning) to confirm the user is an **`isAdmin`, non-suspended
+   Google Workspace super administrator**. Anyone else gets `403`.
 
-DWD credentials are never exposed to the browser (they are minted server-side from the
-runtime service account), but the **ability to drive them** is fully exposed through the
-open API. The `/api/sync/run` handler inspects the `Authorization` / `User-Agent`
-headers only to *label* the run; it does not enforce them.
+`POST /api/sync/run` additionally accepts the Cloud Scheduler service account
+(`SYNC_INVOKER_SA_EMAIL`) so scheduled runs work. `GET /healthz` is always open (Cloud
+Run probes). DWD credentials are never exposed to the browser.
 
-**Before using this for real, put an identity layer in front of it.** Options, roughly
-in order of preference:
+**Enforcement is off until `IAP_AUDIENCE` is set** — until then every page and API is
+public (`--allow-unauthenticated` + `allUsers` invoker), which is fine only for a first
+smoke test. Turn it on:
 
-1. **Identity-Aware Proxy (IAP)** on the Cloud Run service — best for an admin UI.
-   Remove `--allow-unauthenticated`, enable IAP, and grant
-   `roles/iap.httpsResourceAccessor` to the specific users or a Google Group. Browser
-   SSO "just works"; no app changes.
-2. **Require IAM invoker auth** — drop `allUsers`, grant `roles/run.invoker` only to
-   named users and to the Cloud Scheduler service account. Keep the scheduler job's
-   `oidc_token` (already configured in `terraform/main.tf`). Browser access then needs
-   an identity token (e.g. via IAP or `gcloud run services proxy`).
-3. **App-level checks** — verify the IAP assertion header
-   (`X-Goog-IAP-JWT-Assertion`) or, at minimum, enforce a valid Cloud Scheduler OIDC
-   token (audience + service-account email) on `POST /api/sync/run` so the money-moving
-   endpoint is not open even if the UI is.
-4. **Network limits** — set Cloud Run `ingress` to `internal-and-cloud-load-balancing`
-   and reach the UI through an internal load balancer / VPN.
+### With Terraform
 
-Also review: the runtime service account is highly privileged (it can deploy Cloud Run
-and impersonate itself for DWD); scope it down per the split-CI note above if you do not
-need in-place deploys from the same identity.
+```hcl
+enable_iap          = true
+iap_audience        = "/projects/<PROJECT_NUMBER>/global/backendServices/<BACKEND_ID>"
+iap_oauth_client_id = "<client-id>.apps.googleusercontent.com"   # for scheduled runs
+# iap_members       = ["group:workspace-admins@your-domain.com"] # optional; default is the whole domain
+```
+
+`terraform apply` enables IAP on the Cloud Run service, drops the `allUsers` invoker,
+grants the IAP service agent `run.invoker`, grants `iap.httpsResourceAccessor` to
+`iap_members` and the scheduler SA, sets `IAP_AUDIENCE` / `SYNC_INVOKER_SA_EMAIL`, and
+points the scheduler's OIDC token at the IAP client. You still create the OAuth consent
+screen (brand) once in the console if the project has none.
+
+### By hand (console + gcloud + CI)
+
+1. **OAuth consent screen**: APIs & Services → OAuth consent screen → Internal (once per project).
+2. **Enable IAP on the service**: Security → Identity-Aware Proxy → toggle on the Cloud
+   Run service (or `gcloud beta run services update ${SERVICE_NAME} --region ${REGION} --iap`).
+3. **Grant access through IAP**: on that IAP resource, add
+   `roles/iap.httpsResourceAccessor` to `domain:${WORKSPACE_DOMAIN}` (or an admins group)
+   **and** to the scheduler SA `serviceAccount:<scheduler-sa>`.
+4. **Find the audience**: IAP console → the service → "Signed Header JWT" / or
+   `gcloud iap web get-iam-policy` docs; it looks like
+   `/projects/<PROJECT_NUMBER>/global/backendServices/<ID>`.
+5. **Add repository variables** so CI keeps it on:
+   | Variable | Value |
+   | :--- | :--- |
+   | `IAP_AUDIENCE` | the audience from step 4 |
+   | `SYNC_INVOKER_SA_EMAIL` | the Cloud Scheduler service account email |
+   | `CLOUD_RUN_ALLOW_UNAUTH` | `false` |
+6. **Repoint the scheduler** OIDC token audience to the IAP OAuth client ID
+   (`gcloud scheduler jobs update http ${SCHEDULER_JOB} --oidc-token-audience=<client-id>.apps.googleusercontent.com --oidc-service-account-email=<scheduler-sa>`).
+7. Redeploy (push to `main`).
+
+### Optional knobs
+
+- `AUTH_BOOTSTRAP_ADMINS` — comma-separated emails always allowed (break-glass if the
+  Directory API is unavailable). Use sparingly.
+- `SUPER_ADMIN_CACHE_TTL` — seconds to cache each super-admin lookup (default 300).
+
+### Still worth doing
+
+- The runtime service account is highly privileged (deploys Cloud Run, self-impersonates
+  for DWD). Split CI onto a separate identity per the note in
+  [Required Privileges](#required-privileges) if you don't need in-place deploys.
+- Consider `ingress = internal-and-cloud-load-balancing` if you front IAP with a load
+  balancer.
 
 ---
 

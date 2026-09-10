@@ -15,6 +15,7 @@ from app.firestore_db import get_config, update_config, get_sync_history
 from app.workspace_client import WorkspaceClient
 from app.sync_worker import run_license_sync
 from app.scheduler_service import SchedulerService
+from app.auth import require_super_admin, require_sync_caller
 
 # Configure logging
 logging.basicConfig(
@@ -23,10 +24,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gemini_provisioner.main")
 
+# When access control is enforced, hide the interactive API docs / schema behind
+# IAP is still not enough - drop them entirely so only real endpoints are exposed.
+_docs_kwargs = {} if not settings.AUTH_ENABLED else {
+    "docs_url": None, "redoc_url": None, "openapi_url": None,
+}
+
 app = FastAPI(
     title="Gemini Enterprise License Provisioner",
     description="Automate Gemini Enterprise license assignment based on Google Groups membership.",
-    version="1.0.0"
+    version="1.0.0",
+    **_docs_kwargs,
 )
 
 # Paths for static and templates
@@ -105,25 +113,26 @@ class DwdTestPayload(BaseModel):
 # HTML Views
 # -------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
-async def dashboard_view(request: Request):
+async def dashboard_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Admin Dashboard Homepage."""
     config = get_config()
     history = get_sync_history(limit=1)
     last_run = history[0] if history else None
-    
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={
             "active_page": "dashboard",
             "config": config,
-            "last_run": last_run
+            "last_run": last_run,
+            "principal": principal,
         }
     )
 
 
 @app.get("/groups", response_class=HTMLResponse)
-async def groups_view(request: Request):
+async def groups_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Google Groups selection view."""
     config = get_config()
     monitored = config.get("monitored_groups", [])
@@ -145,13 +154,14 @@ async def groups_view(request: Request):
             "active_page": "groups",
             "monitored_groups": monitored,
             "domain_groups": domain_groups,
-            "error": error_msg
+            "error": error_msg,
+            "principal": principal,
         }
     )
 
 
 @app.get("/schedule", response_class=HTMLResponse)
-async def schedule_view(request: Request):
+async def schedule_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Sync schedule configuration view."""
     config = get_config()
     scheduler_service = SchedulerService()
@@ -163,13 +173,14 @@ async def schedule_view(request: Request):
         context={
             "active_page": "schedule",
             "config": config,
-            "scheduler_status": scheduler_status
+            "scheduler_status": scheduler_status,
+            "principal": principal,
         }
     )
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_view(request: Request):
+async def settings_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """System settings and DWD connectivity test view."""
     config = get_config()
     return templates.TemplateResponse(
@@ -177,13 +188,14 @@ async def settings_view(request: Request):
         name="settings.html",
         context={
             "active_page": "settings",
-            "config": config
+            "config": config,
+            "principal": principal,
         }
     )
 
 
 @app.get("/history", response_class=HTMLResponse)
-async def history_view(request: Request):
+async def history_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Execution audit history view."""
     history = get_sync_history(limit=50)
     return templates.TemplateResponse(
@@ -191,7 +203,8 @@ async def history_view(request: Request):
         name="history.html",
         context={
             "active_page": "history",
-            "history": history
+            "history": history,
+            "principal": principal,
         }
     )
 
@@ -200,7 +213,7 @@ async def history_view(request: Request):
 # API Endpoints
 # -------------------------------------------------------------------------
 @app.post("/api/groups")
-async def save_monitored_groups(payload: GroupsPayload):
+async def save_monitored_groups(payload: GroupsPayload, _: Optional[str] = Depends(require_super_admin)):
     """Save selected Google Groups to monitor in Firestore."""
     try:
         updated = update_config({"monitored_groups": payload.groups})
@@ -215,7 +228,7 @@ async def save_monitored_groups(payload: GroupsPayload):
 
 
 @app.post("/api/schedule")
-async def update_sync_schedule(payload: SchedulePayload):
+async def update_sync_schedule(payload: SchedulePayload, _: Optional[str] = Depends(require_super_admin)):
     """Update cron schedule in Firestore and programmatically in Cloud Scheduler."""
     cron = payload.cron_expression.strip()
     if not cron:
@@ -240,7 +253,7 @@ async def update_sync_schedule(payload: SchedulePayload):
 
 
 @app.post("/api/notifications")
-async def update_notifications(payload: NotificationsPayload):
+async def update_notifications(payload: NotificationsPayload, _: Optional[str] = Depends(require_super_admin)):
     """Save sync-run email notification settings to Firestore."""
     raw = payload.notification_emails
     if isinstance(raw, str):
@@ -278,7 +291,7 @@ async def update_notifications(payload: NotificationsPayload):
 
 
 @app.post("/api/settings")
-async def save_settings(payload: SettingsPayload):
+async def save_settings(payload: SettingsPayload, _: Optional[str] = Depends(require_super_admin)):
     """Update Delegated Admin Email, Product ID, and SKU ID in Firestore."""
     try:
         updated = update_config({
@@ -297,7 +310,7 @@ async def save_settings(payload: SettingsPayload):
 
 
 @app.post("/api/test-connection")
-async def test_dwd_connection(payload: DwdTestPayload):
+async def test_dwd_connection(payload: DwdTestPayload, _: Optional[str] = Depends(require_super_admin)):
     """Perform live connectivity check against Admin SDK Directory API using DWD."""
     client = WorkspaceClient(delegated_admin_email=payload.delegated_admin_email)
     result = client.test_dwd_connection(payload.delegated_admin_email)
@@ -305,19 +318,31 @@ async def test_dwd_connection(payload: DwdTestPayload):
 
 
 @app.post("/api/sync/run")
-async def trigger_sync(request: Request, payload: Optional[SyncTriggerPayload] = None):
+async def trigger_sync(
+    request: Request,
+    payload: Optional[SyncTriggerPayload] = None,
+    caller: Optional[str] = Depends(require_sync_caller),
+):
     """Scheduled & manual sync worker trigger endpoint.
-    
+
     Invoked by:
     - Cloud Scheduler via HTTP POST with OIDC authentication
     - Admin UI manually via JSON POST
+
+    When IAP is enforced, the caller must be a Workspace super admin or the
+    configured scheduler service account (SYNC_INVOKER_SA_EMAIL).
     """
     # Identify trigger source
     auth_header = request.headers.get("Authorization", "")
     user_agent = request.headers.get("User-Agent", "")
-    
+    invoker_sa = (settings.SYNC_INVOKER_SA_EMAIL or "").strip().lower()
+
     triggered_by = "admin_ui"
-    if "Google-Cloud-Scheduler" in user_agent or "Bearer" in auth_header:
+    if caller and invoker_sa and caller == invoker_sa:
+        triggered_by = "scheduled"
+    elif caller:
+        triggered_by = "admin_ui"
+    elif "Google-Cloud-Scheduler" in user_agent or "Bearer" in auth_header:
         triggered_by = "scheduled"
     elif payload and payload.triggered_by:
         triggered_by = payload.triggered_by

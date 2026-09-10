@@ -22,6 +22,10 @@ permissions:
 #   CLOUD_SCHEDULER_JOB(optional) default gemini-license-sync-job
 #   DELEGATED_ADMIN_EMAIL (optional) delegated admin to impersonate; if unset,
 #                         configure it on the app's Settings page after deploy
+#   IAP_AUDIENCE          (optional) enables the in-app Workspace super-admin check
+#                         (set once IAP is turned on; see setup_instructions.md)
+#   SYNC_INVOKER_SA_EMAIL (optional) scheduler SA allowed through /api/sync/run when IAP is on
+#   CLOUD_RUN_ALLOW_UNAUTH(optional) default 'true'; set 'false' after enabling IAP
 # ─────────────────────────────────────────────────────────────────────────────────
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -84,15 +88,22 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
           DELEGATED_ADMIN_EMAIL: ${{ vars.DELEGATED_ADMIN_EMAIL }}
+          IAP_AUDIENCE: ${{ vars.IAP_AUDIENCE }}
+          SYNC_INVOKER_SA_EMAIL: ${{ vars.SYNC_INVOKER_SA_EMAIL }}
+          # Set repo variable CLOUD_RUN_ALLOW_UNAUTH=false once IAP is enabled,
+          # so CI stops re-opening the service on every deploy.
+          ALLOW_UNAUTH: ${{ vars.CLOUD_RUN_ALLOW_UNAUTH || 'true' }}
         run: |
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
           ENV_VARS="GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=${{ env.SCHEDULER_JOB }},RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}"
-          if [ -n "${DELEGATED_ADMIN_EMAIL}" ]; then
-            ENV_VARS="${ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
-          fi
+          [ -n "${DELEGATED_ADMIN_EMAIL}" ]  && ENV_VARS="${ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
+          [ -n "${IAP_AUDIENCE}" ]           && ENV_VARS="${ENV_VARS},IAP_AUDIENCE=${IAP_AUDIENCE}"
+          [ -n "${SYNC_INVOKER_SA_EMAIL}" ]  && ENV_VARS="${ENV_VARS},SYNC_INVOKER_SA_EMAIL=${SYNC_INVOKER_SA_EMAIL}"
 
-          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}'..."
+          if [ "${ALLOW_UNAUTH}" = "false" ]; then AUTH_FLAG="--no-allow-unauthenticated"; else AUTH_FLAG="--allow-unauthenticated"; fi
+
+          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}' (${AUTH_FLAG})..."
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image "${IMAGE_URI}" \
             --region ${{ env.REGION }} \
@@ -101,7 +112,7 @@ jobs:
             --memory 1024Mi \
             --cpu 1 \
             --set-env-vars "${ENV_VARS}" \
-            --allow-unauthenticated \
+            ${AUTH_FLAG} \
             --quiet
 
       - name: Output Service URL
