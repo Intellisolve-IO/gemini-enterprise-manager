@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # metadata server commonly reports the attached service account as "default".
     RUNTIME_SERVICE_ACCOUNT_EMAIL: Optional[str] = os.getenv("RUNTIME_SERVICE_ACCOUNT_EMAIL", None)
 
+    # Sync run notifications (email sent via the Gmail API using DWD). The sender
+    # mailbox to impersonate; defaults to the delegated admin. The gmail.send scope
+    # must be added to the DWD entry for this to work.
+    NOTIFICATION_SENDER_EMAIL: Optional[str] = os.getenv("NOTIFICATION_SENDER_EMAIL", None)
+
+    # Public base URL of this service, used to build links in notification emails.
+    # Optional: the app also learns it from incoming requests and stores it in config.
+    PUBLIC_BASE_URL: Optional[str] = os.getenv("PUBLIC_BASE_URL", None)
+
     # Web & Security
     PORT: int = int(os.getenv("PORT", 8080))
     DEBUG: bool = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")

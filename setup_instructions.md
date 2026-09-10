@@ -173,6 +173,8 @@ gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
 > - `RUNTIME_SERVICE_ACCOUNT_EMAIL` = the service account email (`${SA_EMAIL}`) — required for keyless DWD.
 > - `DELEGATED_ADMIN_EMAIL` = `${DELEGATED_ADMIN_EMAIL}` — the user to impersonate (can also be set later from the **Settings** page).
 > - `GCP_PROJECT_ID`, `GCP_REGION` — your project and region.
+> - *(optional)* `NOTIFICATION_SENDER_EMAIL` — mailbox that run-notification emails are sent as; defaults to the delegated admin.
+> - *(optional)* `PUBLIC_BASE_URL` — public https URL of the service, for links in those emails; the app also learns this from web traffic.
 >
 > Terraform and the GitHub Actions workflow set these for you. If you run
 > `gcloud run deploy` by hand, pass them all in `--set-env-vars`.
@@ -200,8 +202,10 @@ Lets the service account read Google Groups and assign Gemini licenses to users 
 5. **Client ID**: paste the Unique Numeric Client ID from Step 3.
 6. **OAuth Scopes** (comma-delimited):
    ```text
-   https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing
+   https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/apps.licensing,https://www.googleapis.com/auth/gmail.send
    ```
+   `gmail.send` is only needed for **run notification emails** (Step 8). Omit it if
+   you will not use notifications — everything else still works.
 7. Click **Authorize**.
 
 ---
@@ -265,6 +269,32 @@ Artifact Registry, and deploy to Cloud Run.
 3. **Monitored Groups**: select the Google Groups to track, then **Save**.
 4. **Sync Schedule**: confirm/adjust the cron frequency, then **Update Cloud Scheduler**.
 5. Click **Run Sync Now** for the first provisioning cycle.
+
+---
+
+## Step 8: Run Notifications (optional)
+
+On the **Sync Schedule** page, under **Run Notifications**:
+
+- Enter one or more recipient email addresses (comma- or newline-separated).
+- Tick **Alert on all activity** to be emailed after every run; leave it unticked
+  to be emailed only for **failed** and **partial-success** runs.
+
+After each sync the service emails a full report — status, start/finish time,
+trigger source, monitored groups, per-category counts, every error, and a link
+back to the Run History page.
+
+Requirements:
+
+- `gmail.send` in the Domain-Wide Delegation scopes (Step 4).
+- The sender mailbox is the delegated admin by default; override with
+  `NOTIFICATION_SENDER_EMAIL`.
+- Links use `PUBLIC_BASE_URL` if set, otherwise the `*.run.app` URL the app last
+  saw serving web traffic. **Set `PUBLIC_BASE_URL` explicitly if you front the
+  service with a custom domain** (a client-supplied Host header is not trusted).
+
+Sending failures are logged (`gemini_provisioner.notifications`) and recorded on
+the run, but never fail the sync itself.
 
 ---
 

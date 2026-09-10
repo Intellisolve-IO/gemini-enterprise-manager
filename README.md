@@ -50,6 +50,8 @@ An automated, serverless solution on Google Cloud Platform that manages and prov
    - Server-rendered Jinja2 templates styled with Tailwind CSS via CDN. No Node.js, npm, or webpack pipeline needed.
 4. **Keyless GitHub Actions Deployment**:
    - Uses Workload Identity Federation (WIF) — no long-lived service account keys stored in GitHub Secrets.
+5. **Run Notifications**:
+   - Optional post-run email (Gmail API via DWD) with full run detail and a link back to Run History; choose "all runs" or "failures only" on the Sync Schedule page.
 
 ---
 

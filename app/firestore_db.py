@@ -33,6 +33,10 @@ def get_config() -> Dict[str, Any]:
         "sku_id": settings.SKU_ID,
         "delegated_admin_email": settings.DELEGATED_ADMIN_EMAIL,
         "cron_expression": "0 2 * * *",
+        # Run notifications
+        "notification_emails": [],          # list of recipient addresses
+        "notify_on": "failures",            # "failures" (only FAILED/PARTIAL_SUCCESS) or "all"
+        "public_base_url": settings.PUBLIC_BASE_URL or "",
         "last_updated": None,
     }
     
