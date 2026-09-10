@@ -101,7 +101,7 @@ gemini-license-provisioner/
 ### 1. Set up Virtual Environment
 
 ```bash
-cd /Users/david.hoff/.gemini/antigravity/scratch/gemini-license-provisioner
+cd gemini-license-provisioner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -117,7 +117,8 @@ pytest tests/ -v
 
 ```bash
 export GCP_PROJECT_ID="ge-hoffhouse"
-export DELEGATED_ADMIN_EMAIL="admin@yourdomain.com"
+export DELEGATED_ADMIN_EMAIL="workspace-admin@your-domain.com"  # a real, active admin user
+export RUNTIME_SERVICE_ACCOUNT_EMAIL="sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com"
 export PRODUCT_ID="Google-Apps"
 export SKU_ID="101031"
 
@@ -131,3 +132,21 @@ Visit `http://localhost:8080` to access the Admin Web UI.
 ## Deployment to GCP
 
 For complete, step-by-step instructions on enabling GCP APIs, configuring Google Workspace Domain-Wide Delegation (DWD), setting up Workload Identity Federation (WIF), and linking GitHub Actions, see [setup_instructions.md](setup_instructions.md).
+
+### Privileges required to deploy
+
+**Google Cloud** (operator, on project `ge-hoffhouse`): `roles/owner`, or the granular set of
+`serviceusage.serviceUsageAdmin`, `datastore.owner`, `iam.serviceAccountAdmin`,
+`resourcemanager.projectIamAdmin`, `run.admin`, `artifactregistry.admin`,
+`cloudscheduler.admin`, and `iam.workloadIdentityPoolAdmin`.
+
+**Google Cloud** (the `sa-gemini-provisioner` service account, runtime + CI/CD):
+`datastore.user`, `cloudscheduler.admin`, `logging.logWriter`, `run.admin`,
+`artifactregistry.admin`, `iam.serviceAccountUser`, and
+`iam.serviceAccountTokenCreator` **on itself** (for keyless DWD).
+
+**Google Workspace**: a **Super Admin** to register the Domain-Wide Delegation entry, plus a
+real, active, licensed delegated-admin user for the service to impersonate (with Directory
+read and license-management privileges — Super Admin covers these).
+
+Full breakdown with per-role rationale: [setup_instructions.md → Required Privileges](setup_instructions.md#required-privileges).

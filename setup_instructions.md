@@ -6,9 +6,57 @@ This guide details step-by-step instructions to configure Google Cloud Platform 
 
 ## Prerequisites
 
-1. **GCP Project**: `ge-hoffhouse` with Owner or Project IAM Admin access.
-2. **Google Workspace**: Super Administrator access to [Google Admin Console](https://admin.google.com).
-3. **GitHub**: A new GitHub repository (e.g. `https://github.com/david-hoff/gemini-license-provisioner`).
+1. **GCP Project**: `ge-hoffhouse`, with billing enabled and an operator identity that holds the roles listed under [Required Privileges](#required-privileges).
+2. **Google Workspace / Cloud Identity**: a tenant on the domain you intend to license (for example `your-domain.com`), plus a **Super Admin** account in that tenant to configure Domain-Wide Delegation.
+3. **A dedicated delegated-admin user** in that Workspace tenant for the service to impersonate — a real, licensed account such as `workspace-admin@your-domain.com`. It must not be a made-up address; the sync fails with `invalid_grant: Invalid email or User ID` if the user does not exist.
+4. **GitHub**: a repository for the code (`<YOUR-GITHUB-USERNAME>/gemini-license-provisioner`) with permission to add Actions secrets.
+5. **Local tooling**: `gcloud` CLI authenticated to `ge-hoffhouse` (`gcloud auth login && gcloud config set project ge-hoffhouse`), and `git`.
+
+---
+
+## Required Privileges
+
+### Google Cloud — operator (the person running Steps 1–5)
+
+Granted on project `ge-hoffhouse`. Either `roles/owner`, or this least-privilege set:
+
+| Role | Needed for |
+| :--- | :--- |
+| `roles/serviceusage.serviceUsageAdmin` | Enable APIs (Step 1) |
+| `roles/datastore.owner` | Create the Firestore database (Step 2) |
+| `roles/iam.serviceAccountAdmin` | Create the service account and set IAM policy **on** it (Steps 3, 5) |
+| `roles/resourcemanager.projectIamAdmin` | Grant project roles to the service account (Steps 3, 5) |
+| `roles/artifactregistry.admin` | Create the Docker repository (Terraform / first deploy) |
+| `roles/run.admin` | Create the Cloud Run service (first deploy) |
+| `roles/iam.serviceAccountUser` on `sa-gemini-provisioner@…` | Deploy Cloud Run "acting as" the runtime service account |
+| `roles/cloudscheduler.admin` | Create the Cloud Scheduler job |
+| `roles/iam.workloadIdentityPoolAdmin` | Create the WIF pool/provider (Step 5) |
+
+### Google Cloud — `sa-gemini-provisioner` service account (runtime **and** CI/CD)
+
+This one service account both runs the Cloud Run service and is the identity GitHub Actions impersonates to deploy. Steps 3 and 5 (`scripts/setup_wif.sh`) grant it:
+
+| Role | Scope | Purpose |
+| :--- | :--- | :--- |
+| `roles/datastore.user` | project | Read/write config and sync history in Firestore |
+| `roles/cloudscheduler.admin` | project | The **Sync Schedule** page edits the scheduler job at runtime |
+| `roles/logging.logWriter` | project | Structured logs |
+| `roles/iam.serviceAccountTokenCreator` | **on itself** | Sign JWTs for **keyless Domain-Wide Delegation** — without it, Test Connection returns `404: Domain not found` |
+| `roles/run.admin` | project | GitHub Actions deploys new revisions |
+| `roles/iam.serviceAccountUser` | on itself | GitHub Actions deploys Cloud Run as this account |
+| `roles/artifactregistry.admin` | project | GitHub Actions pushes container images |
+
+> For a stricter setup, split deployment onto a separate CI service account holding only `run.admin`, `artifactregistry.writer`, and `iam.serviceAccountUser` on the runtime account, and drop `run.admin` / `artifactregistry.admin` / `iam.serviceAccountUser` from `sa-gemini-provisioner`.
+
+### Google Workspace
+
+| Privilege | Held by | Needed for |
+| :--- | :--- | :--- |
+| **Super Admin** (one-time) | the admin doing Step 4 | Add the Domain-Wide Delegation entry in the Admin Console. DWD cannot be delegated to a custom admin role. |
+| Admin roles: **Groups → Read**, **Users → Read**, and license management (Super Admin covers all three) | the delegated-admin user the app impersonates (`workspace-admin@your-domain.com`) | The app calls Admin SDK Directory (`admin.directory.group.readonly`, `admin.directory.user.readonly`) and Enterprise License Manager (`apps.licensing`) **as this user** |
+| An assignable **Gemini Enterprise** SKU with available seats | the Workspace tenant | Licenses to hand out during sync |
+
+The delegated-admin user must be **active** (not suspended) and licensed. A Super Admin account is the simplest choice; a custom admin role works only if it grants the Directory read and licensing privileges above.
 
 ---
 
@@ -46,43 +94,51 @@ If Cloud Firestore is not yet activated in `ge-hoffhouse`:
 
 ## Step 3: Create Service Account & Grant GCP Roles
 
-Create the dedicated application Service Account:
+Create the dedicated `sa-gemini-provisioner` service account. It is the single
+account that both **runs** the Cloud Run service and is impersonated by
+**GitHub Actions** to deploy it; see [Required Privileges](#required-privileges)
+for the rationale behind each role. `scripts/setup_wif.sh` (Step 5) applies the
+same project-level bindings, so you can skip straight to Step 5 if you use it.
 
 ```bash
+SA="sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com"
+
 # Create Service Account
 gcloud iam service-accounts create sa-gemini-provisioner \
   --display-name="Gemini License Provisioner Service Account" \
   --project="ge-hoffhouse"
 
-# Grant Firestore access (roles/datastore.user)
-gcloud projects add-iam-policy-binding ge-hoffhouse \
-  --member="serviceAccount:sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com" \
-  --role="roles/datastore.user"
+# Project-level roles (runtime + CI/CD deploy)
+for ROLE in \
+  roles/datastore.user \
+  roles/cloudscheduler.admin \
+  roles/logging.logWriter \
+  roles/run.admin \
+  roles/artifactregistry.admin \
+  roles/iam.serviceAccountUser
+do
+  gcloud projects add-iam-policy-binding ge-hoffhouse \
+    --member="serviceAccount:${SA}" --role="${ROLE}" --condition=None
+done
 
-# Grant Cloud Scheduler Admin (roles/cloudscheduler.admin)
-gcloud projects add-iam-policy-binding ge-hoffhouse \
-  --member="serviceAccount:sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com" \
-  --role="roles/cloudscheduler.admin"
-
-# Grant Cloud Logging Writer
-gcloud projects add-iam-policy-binding ge-hoffhouse \
-  --member="serviceAccount:sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com" \
-  --role="roles/logging.logWriter"
-
-# Allow the Service Account to sign JWTs as itself (keyless Domain-Wide Delegation).
-# Without this, the deployed service authenticates as the bare Service Account and the
-# Directory API returns "404: Domain not found" on the Test Connection button.
-gcloud iam service-accounts add-iam-policy-binding \
-  sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com \
-  --member="serviceAccount:sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com" \
+# Allow the Service Account to mint signed JWTs as itself (keyless Domain-Wide
+# Delegation). Without this the deployed service authenticates as the bare
+# Service Account and the Directory API returns "404: Domain not found" on the
+# Test Connection button.
+gcloud iam service-accounts add-iam-policy-binding "${SA}" \
+  --member="serviceAccount:${SA}" \
   --role="roles/iam.serviceAccountTokenCreator" \
   --project="ge-hoffhouse"
 ```
 
-> The Cloud Run service must also receive the `RUNTIME_SERVICE_ACCOUNT_EMAIL`
-> environment variable (set to `sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com`).
-> The Terraform config and the GitHub Actions workflow in this repo already set it; if you
-> deploy `gcloud run deploy` by hand, add it to `--set-env-vars`.
+> **Runtime environment variables.** The Cloud Run service needs:
+> - `RUNTIME_SERVICE_ACCOUNT_EMAIL=sa-gemini-provisioner@ge-hoffhouse.iam.gserviceaccount.com`
+>   — required for keyless DWD.
+> - `DELEGATED_ADMIN_EMAIL=workspace-admin@your-domain.com` — the delegated-admin
+>   user to impersonate (can also be set later from the **Settings** page).
+>
+> The Terraform config and the GitHub Actions workflow set `RUNTIME_SERVICE_ACCOUNT_EMAIL`
+> automatically; if you run `gcloud run deploy` by hand, pass both in `--set-env-vars`.
 
 Retrieve the **Unique Numeric Client ID** of the Service Account (needed for Step 4):
 
@@ -120,9 +176,13 @@ WIF eliminates the need to export static private keys to GitHub Secrets.
 Run the provided setup script with your new GitHub repository name:
 
 ```bash
-cd /Users/david.hoff/.gemini/antigravity/scratch/gemini-license-provisioner
+cd gemini-license-provisioner
 bash scripts/setup_wif.sh <YOUR-GITHUB-USERNAME>/gemini-license-provisioner
 ```
+
+`setup_wif.sh` creates the service account (if missing), applies the project-level
+roles from Step 3, grants `roles/iam.serviceAccountTokenCreator` on the account to
+itself, and creates the Workload Identity pool/provider.
 
 The script will output two values. Add them to your GitHub repository under **Settings** &gt; **Secrets and variables** &gt; **Actions** &gt; **Repository secrets**:
 
@@ -138,7 +198,7 @@ The script will output two values. Add them to your GitHub repository under **Se
 Initialize your new repository in GitHub:
 
 ```bash
-cd /Users/david.hoff/.gemini/antigravity/scratch/gemini-license-provisioner
+cd gemini-license-provisioner
 
 git init
 git add .
@@ -160,7 +220,8 @@ Once deployed:
 
 1. Open the public Cloud Run URL printed in GitHub Actions or GCP Console.
 2. Navigate to **Settings &amp; Test**:
-   - Verify the **Delegated Admin Email** (e.g. `admin@yourdomain.com`).
+   - Set the **Delegated Admin Email** to your real delegated-admin user
+     (e.g. `workspace-admin@your-domain.com`) and **Save**.
    - Confirm **Product ID** (`Google-Apps` or `101047`) and **SKU ID** (`101031` or `1010470001`).
    - Click **Test Connection** to confirm DWD connectivity.
 3. Navigate to **Monitored Groups**:
@@ -191,3 +252,15 @@ Account instead of impersonating a Workspace admin. Check, in order:
 
 Once impersonation works but privileges are wrong, the error changes to `401
 unauthorized_client` or `403` - that points at Step 4 or the admin user's role.
+
+### Test Connection returns `invalid_grant: Invalid email or User ID`
+
+Impersonation is working, but the **Delegated Admin Email** is not a real user in
+the Workspace tenant. Set it (on the **Settings** page or via `DELEGATED_ADMIN_EMAIL`)
+to an active, licensed admin account on your actual domain and save.
+
+### Test Connection returns `403` / `unauthorized_client`
+
+The Domain-Wide Delegation entry (Step 4) is missing, uses the wrong client ID, or
+lacks one of the three scopes. Re-check it against the SA's numeric client ID from
+Step 3.

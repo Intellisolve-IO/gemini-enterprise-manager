@@ -19,7 +19,7 @@ echo "==================================================================="
 
 # 1. Ask for GitHub repo if not provided
 if [ -z "${1:-}" ]; then
-  read -rp "Enter your GitHub repository (format: owner/repo, e.g. david-hoff/gemini-license-provisioner): " GITHUB_REPO
+  read -rp "Enter your GitHub repository (format: owner/repo, e.g. my-org/gemini-license-provisioner): " GITHUB_REPO
 else
   GITHUB_REPO="$1"
 fi
@@ -65,6 +65,16 @@ for role in "${ROLES[@]}"; do
     --condition=None \
     --quiet &>/dev/null || true
 done
+
+# 3b. Allow the service account to sign JWTs as itself (keyless Domain-Wide Delegation).
+# Without this, the deployed service authenticates as the bare service account and the
+# Directory API returns "404: Domain not found" on the Test Connection button.
+echo ">> Granting roles/iam.serviceAccountTokenCreator on ${SA_EMAIL} to itself..."
+gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="${PROJECT_ID}" \
+  --quiet &>/dev/null || true
 
 # 4. Create Workload Identity Pool
 if ! gcloud iam workload-identity-pools describe "${POOL_NAME}" --location="global" --project="${PROJECT_ID}" &>/dev/null; then
@@ -125,6 +135,10 @@ echo "    ${SA_EMAIL}"
 echo ""
 echo "-------------------------------------------------------------------"
 echo "Google Workspace Domain-Wide Delegation (DWD) Info:"
-echo " Service Account Unique Client ID:"
+echo " Service Account Unique Client ID (paste into Admin Console DWD):"
 echo "    ${SA_CLIENT_ID}"
+echo ""
+echo " After deploy, set the delegated admin on the Settings page (or the"
+echo " DELEGATED_ADMIN_EMAIL env var) to a REAL, active, licensed admin user"
+echo " in your Workspace tenant - e.g. workspace-admin@your-domain.com."
 echo "==================================================================="

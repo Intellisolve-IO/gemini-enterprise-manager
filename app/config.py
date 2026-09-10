@@ -9,7 +9,10 @@ class Settings(BaseSettings):
     GCP_REGION: str = "us-central1"
     
     # Google Workspace Configuration
-    DELEGATED_ADMIN_EMAIL: str = os.getenv("DELEGATED_ADMIN_EMAIL", "admin@hoffhouse.com")
+    # Placeholder only - set DELEGATED_ADMIN_EMAIL (env var or the Settings page) to a
+    # real, active, licensed admin user in your Workspace tenant. An address that does
+    # not resolve fails with "invalid_grant: Invalid email or User ID".
+    DELEGATED_ADMIN_EMAIL: str = os.getenv("DELEGATED_ADMIN_EMAIL", "workspace-admin@your-domain.com")
     
     # Default Product and SKU IDs
     # Product: Google-Apps or 101047
