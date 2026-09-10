@@ -15,6 +15,7 @@ from app.firestore_db import get_config, update_config, get_sync_history
 from app.workspace_client import WorkspaceClient
 from app.sync_worker import run_license_sync
 from app.scheduler_service import SchedulerService
+from app import auth
 from app.auth import require_super_admin, require_sync_caller
 
 # Configure logging
@@ -63,6 +64,11 @@ async def capture_base_url(request: Request, call_next):
     could otherwise poison the link). For a custom domain, set ``PUBLIC_BASE_URL``.
     """
     global _seen_base_url
+    # Log the IAP JWT audience even before enforcement is turned on, so the exact
+    # value for IAP_AUDIENCE is discoverable from the logs. No-op without the header.
+    _assertion = request.headers.get(settings.IAP_JWT_HEADER)
+    if _assertion:
+        auth._log_observed_audience(_assertion)
     try:
         if not settings.PUBLIC_BASE_URL and request.method == "GET" and \
                 not request.url.path.startswith(("/static", "/healthz", "/api")):
