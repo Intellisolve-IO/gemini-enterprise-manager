@@ -22,6 +22,7 @@ import time
 from typing import Dict, Optional
 
 from fastapi import HTTPException, Request, status
+from google.auth import jwt as ga_jwt
 from google.auth.transport import requests as ga_requests
 from google.oauth2 import id_token
 
@@ -38,6 +39,7 @@ _ga_request = ga_requests.Request()
 _admin_cache: Dict[str, tuple] = {}
 
 _warned_open = False
+_seen_auds: set = set()
 
 
 def _warn_open_once() -> None:
@@ -50,7 +52,24 @@ def _warn_open_once() -> None:
         _warned_open = True
 
 
+def _log_observed_audience(assertion: str) -> None:
+    """Log the aud/email of an incoming IAP assertion (unverified) once per distinct
+    aud, so the exact value to put in IAP_AUDIENCE is discoverable from the logs."""
+    try:
+        claims = ga_jwt.decode(assertion, verify=False)
+        aud = claims.get("aud")
+        if aud and aud not in _seen_auds:
+            _seen_auds.add(aud)
+            logger.warning(
+                "IAP assertion received: aud=%r email=%r. Set IAP_AUDIENCE to this aud "
+                "value if it differs from the configured one.", aud, claims.get("email"),
+            )
+    except Exception:  # never let diagnostics break the request
+        pass
+
+
 def _verify_iap_assertion(assertion: str) -> Dict:
+    _log_observed_audience(assertion)
     try:
         payload = id_token.verify_token(
             assertion,
