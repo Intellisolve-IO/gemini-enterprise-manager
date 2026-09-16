@@ -83,6 +83,8 @@ impersonates to deploy. Steps 3 and 5 (`scripts/setup_wif.sh`) grant it:
 | `roles/cloudscheduler.admin` | project | The **Sync Schedule** page edits the scheduler job at runtime |
 | `roles/logging.logWriter` | project | Structured logs |
 | `roles/iam.serviceAccountTokenCreator` | **on itself** | Sign JWTs for **keyless Domain-Wide Delegation** — without it, Test Connection returns `404: Domain not found` |
+| `roles/iam.securityReviewer` | project | Read-only IAM policy inspection for the **Health Check** module |
+| `roles/serviceusage.serviceUsageViewer` | project | Read-only enabled-API inspection for the **Health Check** module |
 | `roles/run.admin` | project | GitHub Actions deploys new revisions |
 | `roles/iam.serviceAccountUser` | on itself | GitHub Actions deploys Cloud Run as this account |
 | `roles/artifactregistry.admin` | project | GitHub Actions pushes container images |

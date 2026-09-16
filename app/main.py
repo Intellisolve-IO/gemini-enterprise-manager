@@ -12,6 +12,7 @@ from app import auth
 from app.core.module_auth import ModuleDisabledError
 from app.core.templating import templates
 from app.landing import router as landing_router
+from app.modules.health_check.router import router as health_check_router
 from app.modules.license_sync.router import router as license_sync_router
 
 # Configure logging
@@ -89,6 +90,7 @@ async def module_disabled_handler(request: Request, exc: ModuleDisabledError):
 # -------------------------------------------------------------------------
 app.include_router(landing_router)
 app.include_router(license_sync_router)
+app.include_router(health_check_router)
 
 
 @app.get("/healthz")

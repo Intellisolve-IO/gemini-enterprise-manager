@@ -100,6 +100,21 @@ resource "google_project_iam_member" "sa_gemini_licenses" {
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
+# Health Check module: read-only IAM policy + enabled-API introspection.
+# Both are read-only predefined roles - no change to the service account's
+# write-level blast radius.
+resource "google_project_iam_member" "sa_iam_security_reviewer" {
+  project = var.project_id
+  role    = "roles/iam.securityReviewer"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_project_iam_member" "sa_serviceusage_viewer" {
+  project = var.project_id
+  role    = "roles/serviceusage.serviceUsageViewer"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
 # Allow the application service account to mint signed JWTs as itself (IAM Credentials
 # API: signBlob). This is what enables keyless Google Workspace Domain-Wide Delegation
 # from Cloud Run - the app signs a JWT asserting the delegated-admin subject and
