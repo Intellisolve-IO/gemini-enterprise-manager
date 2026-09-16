@@ -85,6 +85,7 @@ impersonates to deploy. Steps 3 and 5 (`scripts/setup_wif.sh`) grant it:
 | `roles/iam.serviceAccountTokenCreator` | **on itself** | Sign JWTs for **keyless Domain-Wide Delegation** — without it, Test Connection returns `404: Domain not found` |
 | `roles/iam.securityReviewer` | project | Read-only IAM policy inspection for the **Health Check** module |
 | `roles/serviceusage.serviceUsageViewer` | project | Read-only enabled-API inspection for the **Health Check** module |
+| `roles/compute.loadBalancerAdmin` | project (opt-in via `enable_url_mapping_module`) | Provision Load Balancer resources for the **App URL Mapping** module. **This is project-scoped, not scoped to resources this app created** — it lets the service account manage *any* load balancer of these types in the project. Leave the Terraform variable `false` (the default) until you've decided to accept that blast radius. |
 | `roles/run.admin` | project | GitHub Actions deploys new revisions |
 | `roles/iam.serviceAccountUser` | on itself | GitHub Actions deploys Cloud Run as this account |
 | `roles/artifactregistry.admin` | project | GitHub Actions pushes container images |

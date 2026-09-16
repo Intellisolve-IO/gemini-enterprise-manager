@@ -110,3 +110,9 @@ variable "container_image" {
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
+
+variable "enable_url_mapping_module" {
+  description = "Grant the runtime service account roles/compute.loadBalancerAdmin so the App URL Mapping module can provision Load Balancer resources. This is a project-scoped role - it lets the service account manage ANY load balancer resource of these types in the project, not just ones this app created. Leave false until you've decided to accept that blast radius (see the note beside the IAM binding in main.tf); it only grants the permission; enabling the module itself still happens at runtime from the admin UI."
+  type        = bool
+  default     = false
+}

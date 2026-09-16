@@ -37,6 +37,7 @@ locals {
     "iamcredentials.googleapis.com",
     "cloudbuild.googleapis.com",
     "gmail.googleapis.com",            # only used for run-notification emails
+    "compute.googleapis.com",          # Load Balancer resources for the App URL Mapping module
   ]
 }
 
@@ -112,6 +113,23 @@ resource "google_project_iam_member" "sa_iam_security_reviewer" {
 resource "google_project_iam_member" "sa_serviceusage_viewer" {
   project = var.project_id
   role    = "roles/serviceusage.serviceUsageViewer"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+# App URL Mapping module: full CRUD on Load Balancer resources (static IPs,
+# managed certs, URL maps, target proxies, forwarding rules) so the module can
+# provision them directly at runtime. This is the broadest grant in this
+# config - roles/compute.loadBalancerAdmin is project-scoped, not scoped to
+# resources this app created, so the service account can also modify any
+# *other* load balancer in the project. Accepted for now to match the app's
+# existing single-service-account pattern; see setup_instructions.md's
+# Security Model for the full rationale. Gated behind a variable (default
+# false) so enabling it is a deliberate, separate decision from deploying the
+# rest of the app.
+resource "google_project_iam_member" "sa_load_balancer_admin" {
+  count   = var.enable_url_mapping_module ? 1 : 0
+  project = var.project_id
+  role    = "roles/compute.loadBalancerAdmin"
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
