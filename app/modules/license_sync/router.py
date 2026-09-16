@@ -1,10 +1,13 @@
 """License Sync module: syncs Gemini Enterprise licenses from Google Group
-membership. This is "module 1" of the admin console - moved here verbatim from
-the original app/main.py, with one path change: its dashboard now lives at
-/modules/license-sync instead of "/" (which is now the consolidated landing
-page - see app/landing.py). Every other path is unchanged, including
-POST /api/sync/run, which Cloud Scheduler's Cloud Run *job* target never goes
-through anyway (it calls the job directly via the Cloud Run Admin API).
+membership. This is "module 1" of the admin console.
+
+All routes live under /modules/license-sync/* (normalized from their original
+bare top-level paths - /groups, /schedule, etc. - as a prerequisite for the
+multi-tenant /t/{tenant_id}/e/{environment_id}/* routing prefix that every
+module route will gain next; a shared prefix can't coexist with routes that
+don't otherwise namespace themselves by module). POST .../api/sync/run is
+unaffected by Cloud Scheduler either way, since the scheduled path calls the
+Cloud Run *job* directly via the Cloud Run Admin API, never this HTTP route.
 """
 import logging
 import re
@@ -79,7 +82,7 @@ async def dashboard_view(request: Request, principal: Optional[str] = Depends(re
     })
 
 
-@router.get("/groups", response_class=HTMLResponse)
+@router.get("/modules/license-sync/groups", response_class=HTMLResponse)
 async def groups_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Google Groups selection view."""
     config = get_config()
@@ -105,7 +108,7 @@ async def groups_view(request: Request, principal: Optional[str] = Depends(requi
     })
 
 
-@router.get("/schedule", response_class=HTMLResponse)
+@router.get("/modules/license-sync/schedule", response_class=HTMLResponse)
 async def schedule_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Sync schedule configuration view."""
     config = get_config()
@@ -121,7 +124,7 @@ async def schedule_view(request: Request, principal: Optional[str] = Depends(req
     })
 
 
-@router.get("/settings", response_class=HTMLResponse)
+@router.get("/modules/license-sync/settings", response_class=HTMLResponse)
 async def settings_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """System settings, DWD connectivity test, and Gemini license subscription picker."""
     config = get_config()
@@ -149,7 +152,7 @@ async def settings_view(request: Request, principal: Optional[str] = Depends(req
     })
 
 
-@router.get("/history", response_class=HTMLResponse)
+@router.get("/modules/license-sync/history", response_class=HTMLResponse)
 async def history_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
     """Execution audit history view."""
     history = get_sync_history(limit=50)
@@ -164,7 +167,7 @@ async def history_view(request: Request, principal: Optional[str] = Depends(requ
 # -------------------------------------------------------------------------
 # API Endpoints
 # -------------------------------------------------------------------------
-@router.post("/api/groups")
+@router.post("/modules/license-sync/api/groups")
 async def save_monitored_groups(payload: GroupsPayload, _: Optional[str] = Depends(require_super_admin)):
     """Save selected Google Groups to monitor in Firestore."""
     try:
@@ -179,7 +182,7 @@ async def save_monitored_groups(payload: GroupsPayload, _: Optional[str] = Depen
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/schedule")
+@router.post("/modules/license-sync/api/schedule")
 async def update_sync_schedule(payload: SchedulePayload, _: Optional[str] = Depends(require_super_admin)):
     """Update cron schedule in Firestore and programmatically in Cloud Scheduler."""
     cron = payload.cron_expression.strip()
@@ -204,7 +207,7 @@ async def update_sync_schedule(payload: SchedulePayload, _: Optional[str] = Depe
     }
 
 
-@router.post("/api/notifications")
+@router.post("/modules/license-sync/api/notifications")
 async def update_notifications(payload: NotificationsPayload, _: Optional[str] = Depends(require_super_admin)):
     """Save sync-run email notification settings to Firestore."""
     raw = payload.notification_emails
@@ -242,7 +245,7 @@ async def update_notifications(payload: NotificationsPayload, _: Optional[str] =
     }
 
 
-@router.post("/api/settings")
+@router.post("/modules/license-sync/api/settings")
 async def save_settings(payload: SettingsPayload, _: Optional[str] = Depends(require_super_admin)):
     """Update the delegated admin and the selected Gemini Enterprise license subscription."""
     updates: Dict[str, Any] = {"delegated_admin_email": payload.delegated_admin_email.strip()}
@@ -277,7 +280,7 @@ async def save_settings(payload: SettingsPayload, _: Optional[str] = Depends(req
     return {"success": True, "message": "Settings saved successfully.", "config": updated}
 
 
-@router.post("/api/test-connection")
+@router.post("/modules/license-sync/api/test-connection")
 async def test_dwd_connection(payload: DwdTestPayload, _: Optional[str] = Depends(require_super_admin)):
     """Perform live connectivity check against Admin SDK Directory API using DWD."""
     client = WorkspaceClient(delegated_admin_email=payload.delegated_admin_email)
@@ -285,7 +288,7 @@ async def test_dwd_connection(payload: DwdTestPayload, _: Optional[str] = Depend
     return result
 
 
-@router.post("/api/sync/run")
+@router.post("/modules/license-sync/api/sync/run")
 async def trigger_sync(
     request: Request,
     payload: Optional[SyncTriggerPayload] = None,

@@ -368,7 +368,7 @@ Access control has two layers, both required once enabled:
 
 Scheduled runs do **not** go through IAP or the web service — Cloud Scheduler executes
 the `${SYNC_JOB}` Cloud Run job directly (see [Scheduled Sync](#scheduled-sync)), so
-enabling IAP never breaks the schedule. `POST /api/sync/run` still powers the dashboard's
+enabling IAP never breaks the schedule. `POST /modules/license-sync/api/sync/run` still powers the dashboard's
 manual **Run Sync Now** button (authorized by IAP + super-admin), and optionally accepts
 a named service account via `SYNC_INVOKER_SA_EMAIL` if you want a second HTTP trigger.
 `GET /healthz` is always open (Cloud Run probes). DWD credentials are never exposed to

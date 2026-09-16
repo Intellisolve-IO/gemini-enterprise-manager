@@ -46,8 +46,8 @@ def test_build_message_contains_full_detail_and_history_link():
     for token in ("eng@example.com", "Cloud Scheduler cron trigger", "Licenses assigned",
                   "sub@example.com", "run123"):
         assert token in msg["text"]
-    assert "https://prov.example.com/history" in msg["text"]
-    assert "https://prov.example.com/history" in msg["html"]
+    assert "https://prov.example.com/modules/license-sync/history" in msg["text"]
+    assert "https://prov.example.com/modules/license-sync/history" in msg["html"]
 
 
 def test_send_sync_notification_uses_gmail_and_never_raises():

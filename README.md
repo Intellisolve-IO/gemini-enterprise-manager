@@ -67,7 +67,7 @@ filled in.
 
 | Component | Role |
 | :--- | :--- |
-| **Cloud Run service** (`app/`) | Single FastAPI container: admin UI + `POST /api/sync/run` (manual "Run sync now" button) |
+| **Cloud Run service** (`app/`) | Single FastAPI container: admin UI + `POST /modules/license-sync/api/sync/run` (manual "Run sync now" button) |
 | **Cloud Run job** (`app/job_runner.py`) | Same image, command `python -m app.job_runner`; runs the sync engine for scheduled runs — no HTTP, no IAP in the path |
 | **Cloud Scheduler** | On a cron schedule, calls the Cloud Run Admin API to execute the job (OAuth token, `roles/run.invoker` on the job) |
 | **Firestore** (Native mode) | `config/gemini_provisioner` (settings) and `sync_history/*` (run logs) |
@@ -173,7 +173,7 @@ from the admin UI, which persists them to Firestore.
 | `LICENSE_CONFIG` | no | unset | Optional headless default for the Gemini Enterprise subscription (a Discovery Engine license config resource name); normally chosen on the Settings page |
 | `CLOUD_SCHEDULER_JOB_NAME` | no | `gemini-license-sync-job` | Cron trigger job the UI reads/updates |
 | `IAP_AUDIENCE` | no | unset | **Turns on** IAP + super-admin enforcement; the IAP JWT `aud` to verify |
-| `SYNC_INVOKER_SA_EMAIL` | no | unset | Optional: a service account allowed through `POST /api/sync/run` when enforcement is on (scheduled runs use the Cloud Run job, not this) |
+| `SYNC_INVOKER_SA_EMAIL` | no | unset | Optional: a service account allowed through `POST /modules/license-sync/api/sync/run` when enforcement is on (scheduled runs use the Cloud Run job, not this) |
 | `AUTH_BOOTSTRAP_ADMINS` | no | empty | Comma-separated break-glass admin emails |
 | `SUPER_ADMIN_CACHE_TTL` | no | `300` | Seconds to cache each super-admin lookup |
 | `NOTIFICATION_SENDER_EMAIL` | no | delegated admin | Mailbox that run-report emails are sent as |
@@ -247,7 +247,7 @@ Optional, two layers, enabled together:
 
 Scheduled sync does **not** go through the web service or IAP — Cloud Scheduler executes
 the Cloud Run job directly. `SYNC_INVOKER_SA_EMAIL` still lets a named service account
-call `POST /api/sync/run` if you ever need a second HTTP trigger, but the schedule no
+call `POST /modules/license-sync/api/sync/run` if you ever need a second HTTP trigger, but the schedule no
 longer relies on it.
 
 Enforcement turns on when `IAP_AUDIENCE` is set. **Until then the UI and all `/api/*`

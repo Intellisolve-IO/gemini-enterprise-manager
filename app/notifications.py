@@ -40,7 +40,8 @@ def should_notify(config: Dict[str, Any], run_record: Dict[str, Any]) -> bool:
 
 def _history_url(config: Dict[str, Any]) -> str:
     base = (settings.PUBLIC_BASE_URL or config.get("public_base_url") or "").rstrip("/")
-    return f"{base}/history" if base else "/history"
+    path = "/modules/license-sync/history"
+    return f"{base}{path}" if base else path
 
 
 def _explain_why(run_record: Dict[str, Any]) -> str:

@@ -12,7 +12,7 @@
             </p>
         </div>
         <div class="flex items-center space-x-3">
-            <a href="/groups" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+            <a href="/modules/license-sync/groups" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
                 <i class="fa-solid fa-layer-group mr-2 text-slate-500"></i> Manage Groups
             </a>
             <button id="nav-sync-btn" onclick="triggerManualSync()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
@@ -28,7 +28,7 @@
             <div>
                 <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Monitored Groups</p>
                 <p class="text-2xl font-bold text-slate-900 mt-1">{{ config.monitored_groups | length }}</p>
-                <p class="text-xs text-blue-600 mt-1 hover:underline"><a href="/groups">Manage in directory &rarr;</a></p>
+                <p class="text-xs text-blue-600 mt-1 hover:underline"><a href="/modules/license-sync/groups">Manage in directory &rarr;</a></p>
             </div>
             <div class="w-12 h-12 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
                 <i class="fa-solid fa-users"></i>
@@ -56,7 +56,7 @@
             <div>
                 <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Sync Schedule</p>
                 <p class="text-base font-bold font-mono text-slate-900 mt-1">{{ config.cron_expression }}</p>
-                <p class="text-xs text-emerald-600 mt-1 hover:underline"><a href="/schedule">Cloud Scheduler &rarr;</a></p>
+                <p class="text-xs text-emerald-600 mt-1 hover:underline"><a href="/modules/license-sync/schedule">Cloud Scheduler &rarr;</a></p>
             </div>
             <div class="w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
                 <i class="fa-regular fa-clock"></i>
@@ -91,7 +91,7 @@
                 <h2 class="text-base font-bold text-slate-900 flex items-center">
                     <i class="fa-solid fa-list-check mr-2 text-blue-600"></i> Tracked Groups
                 </h2>
-                <a href="/groups" class="text-xs font-medium text-blue-600 hover:text-blue-800">Edit list</a>
+                <a href="/modules/license-sync/groups" class="text-xs font-medium text-blue-600 hover:text-blue-800">Edit list</a>
             </div>
 
             {% if config.monitored_groups %}
@@ -109,7 +109,7 @@
                 <div class="text-center py-6 text-slate-400">
                     <i class="fa-solid fa-users-slash text-3xl mb-2 text-slate-300"></i>
                     <p class="text-sm">No Google Groups currently tracked.</p>
-                    <a href="/groups" class="inline-block mt-3 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md text-xs font-semibold hover:bg-blue-100 transition">
+                    <a href="/modules/license-sync/groups" class="inline-block mt-3 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md text-xs font-semibold hover:bg-blue-100 transition">
                         Select groups to monitor
                     </a>
                 </div>
@@ -127,7 +127,7 @@
                 <h2 class="text-base font-bold text-slate-900 flex items-center">
                     <i class="fa-solid fa-bolt mr-2 text-amber-500"></i> Latest Execution Summary
                 </h2>
-                <a href="/history" class="text-xs font-medium text-blue-600 hover:text-blue-800">View complete history &rarr;</a>
+                <a href="/modules/license-sync/history" class="text-xs font-medium text-blue-600 hover:text-blue-800">View complete history &rarr;</a>
             </div>
 
             {% if last_run %}
@@ -163,7 +163,7 @@
                                 </div>
                             {% endfor %}
                             {% if last_run.errors | length > 5 %}
-                                <p class="text-slate-500 text-center pt-1">+ {{ (last_run.errors | length) - 5 }} more in <a href="/history" class="underline">full history</a></p>
+                                <p class="text-slate-500 text-center pt-1">+ {{ (last_run.errors | length) - 5 }} more in <a href="/modules/license-sync/history" class="underline">full history</a></p>
                             {% endif %}
                         </div>
                     </div>

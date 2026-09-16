@@ -16,7 +16,7 @@ def test_iap_enforced_blocks_unauthenticated(monkeypatch):
     monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
     assert client.get("/").status_code == 401
     assert client.get("/modules/license-sync").status_code == 401
-    assert client.post("/api/settings", json={
+    assert client.post("/modules/license-sync/api/settings", json={
         "delegated_admin_email": "a@b.com", "license_config": ""
     }).status_code == 401
     # health probe stays open for Cloud Run
@@ -83,7 +83,7 @@ def test_api_save_groups():
     with patch("app.modules.license_sync.router.update_config",
                return_value={"monitored_groups": ["group1@domain.com"]}):
         response = client.post(
-            "/api/groups",
+            "/modules/license-sync/api/groups",
             json={"groups": ["group1@domain.com"]}
         )
         assert response.status_code == 200
@@ -100,7 +100,7 @@ def test_api_save_settings_with_valid_subscription():
     gem.list_license_configs.return_value = [{"name": _LC, "label": "Gemini Enterprise — us"}]
     with patch("app.modules.license_sync.router.update_config", return_value={}), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        response = client.post("/api/settings", json={
+        response = client.post("/modules/license-sync/api/settings", json={
             "delegated_admin_email": "admin@test.com", "license_config": _LC,
         })
         assert response.status_code == 200
@@ -109,7 +109,7 @@ def test_api_save_settings_with_valid_subscription():
 
 def test_api_save_settings_rejects_workspace_sku():
     with patch("app.modules.license_sync.router.update_config", return_value={}):
-        response = client.post("/api/settings", json={
+        response = client.post("/modules/license-sync/api/settings", json={
             "delegated_admin_email": "admin@test.com", "license_config": "Google-Apps",
         })
         assert response.status_code == 400
@@ -120,7 +120,7 @@ def test_api_save_settings_rejects_unknown_subscription():
     gem.list_license_configs.return_value = [{"name": _LC, "label": "x"}]
     with patch("app.modules.license_sync.router.update_config", return_value={}), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        response = client.post("/api/settings", json={
+        response = client.post("/modules/license-sync/api/settings", json={
             "delegated_admin_email": "admin@test.com",
             "license_config": "projects/750/locations/us/licenseConfigs/other",
         })
@@ -138,7 +138,7 @@ def test_settings_view_renders_subscription_dropdown():
     ]
     with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        r = client.get("/settings")
+        r = client.get("/modules/license-sync/settings")
         assert r.status_code == 200
         assert "Gemini Enterprise License Subscription" in r.text
         assert "Free trial [ACTIVE]" in r.text
@@ -152,7 +152,7 @@ def test_settings_view_handles_license_api_error():
     gem.list_license_configs.side_effect = RuntimeError("permission denied")
     with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        r = client.get("/settings")
+        r = client.get("/modules/license-sync/settings")
         assert r.status_code == 200
         assert "Could not list license subscriptions" in r.text
 
@@ -172,7 +172,7 @@ def test_schedule_view_renders_notification_settings():
     with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.SchedulerService") as MockSched:
         MockSched.return_value.get_schedule.return_value = sched_status
-        response = client.get("/schedule")
+        response = client.get("/modules/license-sync/schedule")
         assert response.status_code == 200
         assert "Run Notifications" in response.text
         assert "ops@example.com" in response.text
@@ -186,7 +186,7 @@ def test_api_save_notifications_valid():
         "notify_on": "all",
     }):
         response = client.post(
-            "/api/notifications",
+            "/modules/license-sync/api/notifications",
             json={"notification_emails": "ops@example.com, sre@example.com", "notify_on": "all"},
         )
         assert response.status_code == 200
@@ -198,7 +198,7 @@ def test_api_save_notifications_valid():
 
 def test_api_save_notifications_rejects_bad_email():
     response = client.post(
-        "/api/notifications",
+        "/modules/license-sync/api/notifications",
         json={"notification_emails": ["not-an-email"], "notify_on": "failures"},
     )
     assert response.status_code == 400
@@ -206,7 +206,7 @@ def test_api_save_notifications_rejects_bad_email():
 
 def test_api_save_notifications_rejects_bad_mode():
     response = client.post(
-        "/api/notifications",
+        "/modules/license-sync/api/notifications",
         json={"notification_emails": [], "notify_on": "sometimes"},
     )
     assert response.status_code == 400
@@ -225,7 +225,7 @@ def test_api_test_connection():
         MockClient.return_value = mock_instance
 
         response = client.post(
-            "/api/test-connection",
+            "/modules/license-sync/api/test-connection",
             json={"delegated_admin_email": "admin@test.com"}
         )
         assert response.status_code == 200
