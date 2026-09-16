@@ -64,7 +64,7 @@ def test_create_static_ip_builds_correct_request_and_returns_address():
     mock_client.insert.return_value = _op()
     mock_client.get.return_value = MagicMock(address="34.1.2.3")
     with patch("app.modules.url_mapping.compute_client.compute_v1.GlobalAddressesClient", return_value=mock_client):
-        ip = compute_client.create_static_ip("proj", "ge-urlmap-abc-ip")
+        ip = compute_client.create_static_ip("proj", "ge-urlmap-abc-ip", None)
     assert ip == "34.1.2.3"
     _, kwargs = mock_client.insert.call_args
     assert kwargs["project"] == "proj"
@@ -76,7 +76,7 @@ def test_create_managed_certificate_builds_correct_request():
     mock_client = MagicMock()
     mock_client.insert.return_value = _op()
     with patch("app.modules.url_mapping.compute_client.compute_v1.SslCertificatesClient", return_value=mock_client):
-        compute_client.create_managed_certificate("proj", "ge-urlmap-abc-cert", "ai.example.com")
+        compute_client.create_managed_certificate("proj", "ge-urlmap-abc-cert", "ai.example.com", None)
     _, kwargs = mock_client.insert.call_args
     cert = kwargs["ssl_certificate_resource"]
     assert cert.type_ == "MANAGED"
@@ -89,7 +89,7 @@ def test_get_certificate_status_returns_enum_name():
     mock_cert.managed.status.name = "PROVISIONING"
     mock_client.get.return_value = mock_cert
     with patch("app.modules.url_mapping.compute_client.compute_v1.SslCertificatesClient", return_value=mock_client):
-        status = compute_client.get_certificate_status("proj", "ge-urlmap-abc-cert")
+        status = compute_client.get_certificate_status("proj", "ge-urlmap-abc-cert", None)
     assert status == "PROVISIONING"
 
 
@@ -105,7 +105,7 @@ def test_create_https_redirect_url_map_splits_host_and_path():
     mock_client.insert.return_value = _op()
     with patch("app.modules.url_mapping.compute_client.compute_v1.UrlMapsClient", return_value=mock_client):
         compute_client.create_https_redirect_url_map(
-            "proj", "ge-urlmap-abc-map", "https://geminienterprise.google.com/apps/123"
+            "proj", "ge-urlmap-abc-map", "https://geminienterprise.google.com/apps/123", None
         )
     _, kwargs = mock_client.insert.call_args
     redirect = kwargs["url_map_resource"].default_url_redirect
@@ -121,7 +121,7 @@ def test_create_global_forwarding_rule_targets_https_proxy():
               return_value=mock_client):
         compute_client.create_global_forwarding_rule(
             "proj", "ge-urlmap-abc-fr", "34.1.2.3", "ge-urlmap-abc-https-proxy",
-            port_range="443", proxy_kind="https",
+            port_range="443", proxy_kind="https", credentials=None,
         )
     _, kwargs = mock_client.insert.call_args
     rule = kwargs["forwarding_rule_resource"]

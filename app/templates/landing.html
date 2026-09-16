@@ -5,11 +5,16 @@
 {% block content %}
 <div class="space-y-6">
     <!-- Header -->
-    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Gemini Enterprise Admin Console</h1>
-        <p class="text-sm text-slate-500 mt-1">
-            Enable the modules you need. Each one has its own management page once switched on.
-        </p>
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Gemini Enterprise Admin Console</h1>
+            <p class="text-sm text-slate-500 mt-1">
+                Enable the modules you need. Each one has its own management page once switched on.
+            </p>
+        </div>
+        <a href="/t/{{ tenant_id }}/e/{{ environment_id }}/settings" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+            <i class="fa-solid fa-gear mr-2 text-slate-500"></i> Environment Settings
+        </a>
     </div>
 
     <!-- Module Grid -->

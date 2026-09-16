@@ -59,6 +59,7 @@ def _run(config, members_map, already_licensed, batch=None):
     gem.assigned_user_emails.return_value = set(already_licensed)
     gem.batch_assign.return_value = batch or {"assigned": 0, "failed": 0, "errors": [], "operation": None}
     with patch("app.sync_worker.get_config", return_value=config), \
+         patch("app.sync_worker.get_environment", return_value={"sa_email": None, "gcp_project_id": ""}), \
          patch("app.sync_worker.record_sync_history", return_value="doc1"), \
          patch("app.sync_worker.send_sync_notification", return_value={"sent": False}), \
          patch("app.sync_worker.WorkspaceClient", return_value=ws), \

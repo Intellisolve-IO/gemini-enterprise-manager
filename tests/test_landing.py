@@ -151,3 +151,50 @@ def test_toggle_unknown_module_404():
 def test_toggle_requires_authentication():
     r = _client(signed_in=False).post("/t/t1/e/env1/api/modules/health-check/toggle", json={"enabled": True})
     assert r.status_code == 401
+
+
+def test_environment_settings_page_renders():
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=_ENVIRONMENT):
+        r = _client().get("/t/t1/e/env1/settings")
+    assert r.status_code == 200
+    assert "Environment Settings" in r.text
+
+
+def test_update_environment_settings():
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=_ENVIRONMENT), \
+         patch("app.landing.tenants_db.update_environment") as mock_update:
+        mock_update.return_value = {**_ENVIRONMENT, "gcp_project_id": "acme-proj", "sa_email": "sa@acme-proj.iam.gserviceaccount.com"}
+        r = _client().post("/t/t1/e/env1/settings", json={
+            "gcp_project_id": "acme-proj", "sa_email": "sa@acme-proj.iam.gserviceaccount.com",
+        })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["success"] is True
+    mock_update.assert_called_once_with("t1", "env1", {
+        "gcp_project_id": "acme-proj", "sa_email": "sa@acme-proj.iam.gserviceaccount.com",
+    })
+
+
+def test_test_connection_requires_sa_email_set():
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value={**_ENVIRONMENT, "sa_email": ""}):
+        r = _client().post("/t/t1/e/env1/settings/test-connection")
+    assert r.status_code == 400
+
+
+def test_test_connection_success():
+    env = {**_ENVIRONMENT, "sa_email": "sa@acme-proj.iam.gserviceaccount.com", "gcp_project_id": "acme-proj"}
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=env), \
+         patch("app.landing.tenant_credentials.test_tenant_impersonation") as mock_test:
+        mock_test.return_value = {"success": True, "message": "ok", "subject": env["sa_email"]}
+        r = _client().post("/t/t1/e/env1/settings/test-connection")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+    mock_test.assert_called_once_with("sa@acme-proj.iam.gserviceaccount.com", "acme-proj")

@@ -20,8 +20,8 @@ _page = require_module_enabled_page(_MODULE_ID)
 _api = require_module_enabled_api(_MODULE_ID)
 
 
-def _run_and_cache(tenant_id: str, environment_id: str) -> dict:
-    report = run_all_checks(tenant_id, environment_id)
+def _run_and_cache(tenant_id: str, environment_id: str, environment: Dict[str, Any]) -> dict:
+    report = run_all_checks(tenant_id, environment_id, environment)
     try:
         update_module_config(
             tenant_id, environment_id, _MODULE_ID,
@@ -35,8 +35,8 @@ def _run_and_cache(tenant_id: str, environment_id: str) -> dict:
 
 @router.get("/modules/health-check", response_class=HTMLResponse)
 async def health_check_view(request: Request, tenant_id: str, environment_id: str,
-                             _: Dict[str, Any] = Depends(_page)):
-    report = _run_and_cache(tenant_id, environment_id)
+                             environment: Dict[str, Any] = Depends(_page)):
+    report = _run_and_cache(tenant_id, environment_id, environment)
     return render(request, "health_check/report.html", {
         "active_page": _MODULE_ID,
         "report": report,
@@ -45,7 +45,7 @@ async def health_check_view(request: Request, tenant_id: str, environment_id: st
 
 @router.post("/modules/health-check/api/run")
 async def health_check_run(tenant_id: str, environment_id: str,
-                            _: Dict[str, Any] = Depends(_api)):
+                            environment: Dict[str, Any] = Depends(_api)):
     """Re-run all checks and return the fresh report as JSON (used by the page's
     "Re-run" button so it doesn't need a full reload)."""
-    return _run_and_cache(tenant_id, environment_id)
+    return _run_and_cache(tenant_id, environment_id, environment)

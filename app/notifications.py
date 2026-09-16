@@ -11,7 +11,7 @@ import html
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.config import settings
 from app.workspace_client import WorkspaceClient
@@ -171,8 +171,13 @@ def build_message(config: Dict[str, Any], run_record: Dict[str, Any],
 
 
 def send_sync_notification(config: Dict[str, Any], run_record: Dict[str, Any],
-                            tenant_id: str, environment_id: str) -> Dict[str, Any]:
+                            tenant_id: str, environment_id: str,
+                            sa_email: Optional[str] = None) -> Dict[str, Any]:
     """Send the run notification if the saved preference calls for it.
+
+    `sa_email` is the environment's own tenant-owned service account to
+    impersonate (None falls back to the central app's own identity - see
+    app/core/tenant_credentials.py).
 
     Returns a small result dict; never raises.
     """
@@ -194,7 +199,7 @@ def send_sync_notification(config: Dict[str, Any], run_record: Dict[str, Any],
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
 
     try:
-        service = WorkspaceClient().get_gmail_service(subject_email=sender)
+        service = WorkspaceClient(sa_email=sa_email).get_gmail_service(subject_email=sender)
         service.users().messages().send(userId="me", body={"raw": raw}).execute()
         logger.info("Sent sync notification to %s (status %s)", recipients, run_record.get("status"))
         return {"sent": True, "recipients": recipients}

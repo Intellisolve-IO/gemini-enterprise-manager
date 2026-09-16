@@ -12,6 +12,12 @@ proxy/cert/url-map cross-references) - the generated client's typed requests
 and built-in operation polling (`ExtendedOperation.result()`) meaningfully
 reduce the bug surface for orchestrating eight resources by hand.
 
+Every function takes an explicit `credentials` object (an impersonated
+credential from app/core/tenant_credentials.py, threaded down from the
+router) rather than relying on implicit Application Default Credentials, so
+this module provisions resources in the *environment's* GCP project as its
+own tenant-owned service account, not the central app's ambient identity.
+
 KNOWN LIMITATION - needs validation against a real Gemini Enterprise deep link
 before this module is considered done: Compute's `HttpRedirectAction` has no
 field for a query string, only host and path. A deep link that requires query
@@ -19,16 +25,17 @@ parameters cannot be expressed by a pure LB-level redirect; `validate_target_url
 below refuses those up front rather than silently producing a mapping that loses
 required parameters.
 
-Requires the runtime service account to hold `roles/compute.loadBalancerAdmin`
+Requires the impersonated service account to hold `roles/compute.loadBalancerAdmin`
 (project-scoped - see terraform/main.tf's `enable_url_mapping_module` variable
 and the accepted blast-radius note there).
 """
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from google.api_core.exceptions import NotFound
 from google.api_core.extended_operation import ExtendedOperation
+from google.auth.credentials import Credentials
 from google.cloud import compute_v1
 
 logger = logging.getLogger("gemini_provisioner.url_mapping.compute_client")
@@ -79,16 +86,16 @@ def validate_target_url(target_deep_link: str) -> None:
         )
 
 
-def create_static_ip(project_id: str, name: str) -> str:
+def create_static_ip(project_id: str, name: str, credentials: Optional[Credentials]) -> str:
     """Reserve a global static external IPv4 address; returns the address string."""
-    client = compute_v1.GlobalAddressesClient()
+    client = compute_v1.GlobalAddressesClient(credentials=credentials)
     address_resource = compute_v1.Address(name=name, ip_version="IPV4", address_type="EXTERNAL")
     _wait(client.insert(project=project_id, address_resource=address_resource))
     return client.get(project=project_id, address=name).address
 
 
-def create_managed_certificate(project_id: str, name: str, domain: str) -> None:
-    client = compute_v1.SslCertificatesClient()
+def create_managed_certificate(project_id: str, name: str, domain: str, credentials: Optional[Credentials]) -> None:
+    client = compute_v1.SslCertificatesClient(credentials=credentials)
     cert_resource = compute_v1.SslCertificate(
         name=name,
         type_="MANAGED",
@@ -97,18 +104,19 @@ def create_managed_certificate(project_id: str, name: str, domain: str) -> None:
     _wait(client.insert(project=project_id, ssl_certificate_resource=cert_resource))
 
 
-def get_certificate_status(project_id: str, name: str) -> str:
+def get_certificate_status(project_id: str, name: str, credentials: Optional[Credentials]) -> str:
     """One of ACTIVE / PROVISIONING / PROVISIONING_FAILED /
     PROVISIONING_FAILED_PERMANENTLY / RENEWAL_FAILED / MANAGED_CERTIFICATE_STATUS_UNSPECIFIED."""
-    client = compute_v1.SslCertificatesClient()
+    client = compute_v1.SslCertificatesClient(credentials=credentials)
     cert = client.get(project=project_id, ssl_certificate=name)
     status = cert.managed.status
     return getattr(status, "name", str(status))
 
 
-def create_https_redirect_url_map(project_id: str, name: str, target_deep_link: str) -> None:
+def create_https_redirect_url_map(project_id: str, name: str, target_deep_link: str,
+                                   credentials: Optional[Credentials]) -> None:
     parsed = urlparse(target_deep_link)
-    client = compute_v1.UrlMapsClient()
+    client = compute_v1.UrlMapsClient(credentials=credentials)
     url_map_resource = compute_v1.UrlMap(
         name=name,
         default_url_redirect=compute_v1.HttpRedirectAction(
@@ -122,8 +130,8 @@ def create_https_redirect_url_map(project_id: str, name: str, target_deep_link: 
     _wait(client.insert(project=project_id, url_map_resource=url_map_resource))
 
 
-def create_http_to_https_redirect_map(project_id: str, name: str) -> None:
-    client = compute_v1.UrlMapsClient()
+def create_http_to_https_redirect_map(project_id: str, name: str, credentials: Optional[Credentials]) -> None:
+    client = compute_v1.UrlMapsClient(credentials=credentials)
     url_map_resource = compute_v1.UrlMap(
         name=name,
         default_url_redirect=compute_v1.HttpRedirectAction(
@@ -135,8 +143,9 @@ def create_http_to_https_redirect_map(project_id: str, name: str) -> None:
     _wait(client.insert(project=project_id, url_map_resource=url_map_resource))
 
 
-def create_target_https_proxy(project_id: str, name: str, url_map_name: str, ssl_cert_name: str) -> None:
-    client = compute_v1.TargetHttpsProxiesClient()
+def create_target_https_proxy(project_id: str, name: str, url_map_name: str, ssl_cert_name: str,
+                               credentials: Optional[Credentials]) -> None:
+    client = compute_v1.TargetHttpsProxiesClient(credentials=credentials)
     proxy_resource = compute_v1.TargetHttpsProxy(
         name=name,
         url_map=f"projects/{project_id}/global/urlMaps/{url_map_name}",
@@ -145,8 +154,9 @@ def create_target_https_proxy(project_id: str, name: str, url_map_name: str, ssl
     _wait(client.insert(project=project_id, target_https_proxy_resource=proxy_resource))
 
 
-def create_target_http_proxy(project_id: str, name: str, url_map_name: str) -> None:
-    client = compute_v1.TargetHttpProxiesClient()
+def create_target_http_proxy(project_id: str, name: str, url_map_name: str,
+                              credentials: Optional[Credentials]) -> None:
+    client = compute_v1.TargetHttpProxiesClient(credentials=credentials)
     proxy_resource = compute_v1.TargetHttpProxy(
         name=name,
         url_map=f"projects/{project_id}/global/urlMaps/{url_map_name}",
@@ -156,9 +166,9 @@ def create_target_http_proxy(project_id: str, name: str, url_map_name: str) -> N
 
 def create_global_forwarding_rule(
     project_id: str, name: str, ip_address: str, target_proxy_name: str,
-    port_range: str, proxy_kind: str,
+    port_range: str, proxy_kind: str, credentials: Optional[Credentials],
 ) -> None:
-    client = compute_v1.GlobalForwardingRulesClient()
+    client = compute_v1.GlobalForwardingRulesClient(credentials=credentials)
     target = (
         f"projects/{project_id}/global/targetHttpsProxies/{target_proxy_name}"
         if proxy_kind == "https"
@@ -175,37 +185,41 @@ def create_global_forwarding_rule(
     _wait(client.insert(project=project_id, forwarding_rule_resource=rule_resource))
 
 
-def provision_mapping(project_id: str, mapping_id: str, custom_domain: str, target_deep_link: str) -> Dict[str, Any]:
-    """Create every GCP resource for one mapping, in dependency order. Raises on
-    the first failure - the caller should persist whatever's in `resource_names`
-    as the mapping's `gcp_resources` regardless, so `teardown_mapping` can clean
-    up any partial state."""
+def provision_mapping(project_id: str, mapping_id: str, custom_domain: str, target_deep_link: str,
+                       credentials: Optional[Credentials] = None) -> Dict[str, Any]:
+    """Create every GCP resource for one mapping, in dependency order, acting
+    as `credentials` (the environment's impersonated service account, or the
+    central app's own identity when None). Raises on the first failure - the
+    caller should persist whatever's in `resource_names` as the mapping's
+    `gcp_resources` regardless, so `teardown_mapping` can clean up any partial
+    state."""
     validate_target_url(target_deep_link)
     names = resource_names(mapping_id)
 
-    reserved_ip = create_static_ip(project_id, names["address_name"])
-    create_managed_certificate(project_id, names["ssl_cert_name"], custom_domain)
-    create_https_redirect_url_map(project_id, names["url_map_name"], target_deep_link)
+    reserved_ip = create_static_ip(project_id, names["address_name"], credentials)
+    create_managed_certificate(project_id, names["ssl_cert_name"], custom_domain, credentials)
+    create_https_redirect_url_map(project_id, names["url_map_name"], target_deep_link, credentials)
     create_target_https_proxy(
-        project_id, names["target_https_proxy_name"], names["url_map_name"], names["ssl_cert_name"]
+        project_id, names["target_https_proxy_name"], names["url_map_name"], names["ssl_cert_name"], credentials
     )
     create_global_forwarding_rule(
         project_id, names["forwarding_rule_name"], reserved_ip,
-        names["target_https_proxy_name"], port_range="443", proxy_kind="https",
+        names["target_https_proxy_name"], port_range="443", proxy_kind="https", credentials=credentials,
     )
 
     # HTTP -> HTTPS redirect stack, sharing the same reserved IP.
-    create_http_to_https_redirect_map(project_id, names["http_url_map_name"])
-    create_target_http_proxy(project_id, names["target_http_proxy_name"], names["http_url_map_name"])
+    create_http_to_https_redirect_map(project_id, names["http_url_map_name"], credentials)
+    create_target_http_proxy(project_id, names["target_http_proxy_name"], names["http_url_map_name"], credentials)
     create_global_forwarding_rule(
         project_id, names["http_forwarding_rule_name"], reserved_ip,
-        names["target_http_proxy_name"], port_range="80", proxy_kind="http",
+        names["target_http_proxy_name"], port_range="80", proxy_kind="http", credentials=credentials,
     )
 
     return {**names, "reserved_ip": reserved_ip, "cert_status": "PROVISIONING"}
 
 
-def teardown_mapping(project_id: str, gcp_resources: Dict[str, str]) -> None:
+def teardown_mapping(project_id: str, gcp_resources: Dict[str, str],
+                      credentials: Optional[Credentials] = None) -> None:
     """Delete every resource for a mapping, in dependency order (forwarding
     rules and proxies before the url maps/cert/address they reference).
     Tolerates already-deleted (404) resources so a retry after a partial
@@ -218,24 +232,26 @@ def teardown_mapping(project_id: str, gcp_resources: Dict[str, str]) -> None:
             pass
 
     if gcp_resources.get("http_forwarding_rule_name"):
-        _delete(compute_v1.GlobalForwardingRulesClient(), project=project_id,
+        _delete(compute_v1.GlobalForwardingRulesClient(credentials=credentials), project=project_id,
                 forwarding_rule=gcp_resources["http_forwarding_rule_name"])
     if gcp_resources.get("forwarding_rule_name"):
-        _delete(compute_v1.GlobalForwardingRulesClient(), project=project_id,
+        _delete(compute_v1.GlobalForwardingRulesClient(credentials=credentials), project=project_id,
                 forwarding_rule=gcp_resources["forwarding_rule_name"])
     if gcp_resources.get("target_http_proxy_name"):
-        _delete(compute_v1.TargetHttpProxiesClient(), project=project_id,
+        _delete(compute_v1.TargetHttpProxiesClient(credentials=credentials), project=project_id,
                 target_http_proxy=gcp_resources["target_http_proxy_name"])
     if gcp_resources.get("target_https_proxy_name"):
-        _delete(compute_v1.TargetHttpsProxiesClient(), project=project_id,
+        _delete(compute_v1.TargetHttpsProxiesClient(credentials=credentials), project=project_id,
                 target_https_proxy=gcp_resources["target_https_proxy_name"])
     if gcp_resources.get("http_url_map_name"):
-        _delete(compute_v1.UrlMapsClient(), project=project_id, url_map=gcp_resources["http_url_map_name"])
+        _delete(compute_v1.UrlMapsClient(credentials=credentials), project=project_id,
+                url_map=gcp_resources["http_url_map_name"])
     if gcp_resources.get("url_map_name"):
-        _delete(compute_v1.UrlMapsClient(), project=project_id, url_map=gcp_resources["url_map_name"])
+        _delete(compute_v1.UrlMapsClient(credentials=credentials), project=project_id,
+                url_map=gcp_resources["url_map_name"])
     if gcp_resources.get("ssl_cert_name"):
-        _delete(compute_v1.SslCertificatesClient(), project=project_id,
+        _delete(compute_v1.SslCertificatesClient(credentials=credentials), project=project_id,
                 ssl_certificate=gcp_resources["ssl_cert_name"])
     if gcp_resources.get("address_name"):
-        _delete(compute_v1.GlobalAddressesClient(), project=project_id,
+        _delete(compute_v1.GlobalAddressesClient(credentials=credentials), project=project_id,
                 address=gcp_resources["address_name"])

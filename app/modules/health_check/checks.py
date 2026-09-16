@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.config import settings
+from app.core import tenant_credentials
 from app.core.module_config import is_module_enabled
 from app.firestore_db import get_config
 from app.gemini_licensing import GeminiLicenseClient
@@ -134,9 +135,11 @@ def check_apis_enabled() -> Dict[str, Any]:
     return _result("apis_enabled", "Required APIs Enabled", "pass", "All required APIs are enabled.")
 
 
-def check_license_subscription() -> Dict[str, Any]:
+def check_license_subscription(environment: Dict[str, Any]) -> Dict[str, Any]:
+    project_id = tenant_credentials.project_id_for(environment)
+    sa_email = environment.get("sa_email")
     try:
-        configs = GeminiLicenseClient().list_license_configs()
+        configs = GeminiLicenseClient(project_id=project_id, sa_email=sa_email).list_license_configs()
     except Exception as e:
         return _result("license_subscription", "Gemini Enterprise License Subscription", "fail",
                         f"Could not reach the Discovery Engine licensing API: {e}",
@@ -150,9 +153,11 @@ def check_license_subscription() -> Dict[str, Any]:
                     f"{len(configs)} subscription(s) found.")
 
 
-def check_dwd_connectivity(tenant_id: str, environment_id: str) -> Dict[str, Any]:
+def check_dwd_connectivity(tenant_id: str, environment_id: str, environment: Dict[str, Any]) -> Dict[str, Any]:
     delegated_email = get_config(tenant_id, environment_id).get("delegated_admin_email", "")
-    result = WorkspaceClient(delegated_admin_email=delegated_email).test_dwd_connection(delegated_email)
+    result = WorkspaceClient(
+        delegated_admin_email=delegated_email, sa_email=environment.get("sa_email")
+    ).test_dwd_connection(delegated_email)
     status_ = "pass" if result.get("success") else "fail"
     return _result("dwd_connectivity", "Domain-Wide Delegation Connectivity", status_,
                     result.get("message", ""), result.get("guidance"))
@@ -189,20 +194,26 @@ def check_scheduler(tenant_id: str, environment_id: str) -> Optional[Dict[str, A
                     status_info.get("error", "Scheduler job not found or not yet created."))
 
 
-def run_all_checks(tenant_id: str, environment_id: str) -> Dict[str, Any]:
+def run_all_checks(tenant_id: str, environment_id: str, environment: Dict[str, Any]) -> Dict[str, Any]:
     """Run every check for one environment and return {checks, counts, ran_at}.
 
-    check_iam_roles/check_self_impersonation/check_apis_enabled audit the
-    *central app's own* runtime identity/project, not yet the environment's
-    tenant-owned service account - that per-environment credential/IAM
-    inspection is Phase 2 of the multi-tenant conversion (see
-    app/sync_worker.py's docstring for the same note)."""
+    check_iam_roles/check_self_impersonation/check_apis_enabled deliberately
+    keep auditing the *central app's own* runtime identity/project, not the
+    environment's tenant-owned service account: their baseline role/API lists
+    are specifically what the *central* app needs (Firestore, Cloud
+    Scheduler, its own IAM self-impersonation), which don't apply to a
+    tenant's differently-scoped SA. Making these baselines meaningful
+    per-environment is later work (see the plan's Health Check
+    history/drift phase), not part of this credential-impersonation phase.
+    check_license_subscription/check_dwd_connectivity DO use the
+    environment's own sa_email/project_id, since licensing and DWD
+    connectivity are inherently per-tenant concerns."""
     checks = [
         check_iam_roles(),
         check_self_impersonation(),
         check_apis_enabled(),
-        check_license_subscription(),
-        check_dwd_connectivity(tenant_id, environment_id),
+        check_license_subscription(environment),
+        check_dwd_connectivity(tenant_id, environment_id, environment),
         check_firestore(tenant_id, environment_id),
     ]
     scheduler_check = check_scheduler(tenant_id, environment_id)

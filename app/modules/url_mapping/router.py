@@ -7,11 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app.config import settings
+from app.core import tenant_credentials
 from app.core.module_auth import require_module_enabled_api, require_module_enabled_page
 from app.core.module_config import get_module_config, update_module_config
 from app.core.rendering import render
 from app.modules.url_mapping import compute_client
+
+_CLOUD_PLATFORM_SCOPE = ["https://www.googleapis.com/auth/cloud-platform"]
 
 logger = logging.getLogger("gemini_provisioner.url_mapping")
 
@@ -79,13 +81,12 @@ async def create_mapping(payload: CreateMappingPayload, request: Request, tenant
     mappings.append(mapping)
     _save_mappings(tenant_id, environment_id, mappings)
 
-    # NOTE: still provisions against the central app's own GCP project
-    # (settings.GCP_PROJECT_ID), not yet the environment's own tenant-owned
-    # project via impersonated credentials - that's Phase 2 of the
-    # multi-tenant conversion (see app/sync_worker.py's docstring).
+    environment = getattr(request.state, "environment", {}) or {}
+    project_id = tenant_credentials.project_id_for(environment)
+    credentials = tenant_credentials.build_credentials(environment.get("sa_email"), _CLOUD_PLATFORM_SCOPE)
     try:
         mapping["gcp_resources"] = compute_client.provision_mapping(
-            settings.GCP_PROJECT_ID, mapping_id, custom_domain, target_deep_link
+            project_id, mapping_id, custom_domain, target_deep_link, credentials=credentials
         )
         mapping["status"] = "provisioning"  # cert provisioning continues async; see /refresh
     except Exception as e:
@@ -100,17 +101,20 @@ async def create_mapping(payload: CreateMappingPayload, request: Request, tenant
 
 
 @router.post("/modules/url-mapping/api/mappings/{mapping_id}/refresh")
-async def refresh_mapping(mapping_id: str, tenant_id: str, environment_id: str,
+async def refresh_mapping(request: Request, mapping_id: str, tenant_id: str, environment_id: str,
                            _: Dict[str, Any] = Depends(_api)):
     mappings = _get_mappings(tenant_id, environment_id)
     mapping = next((m for m in mappings if m["id"] == mapping_id), None)
     if mapping is None:
         raise HTTPException(status_code=404, detail="Mapping not found.")
 
+    environment = getattr(request.state, "environment", {}) or {}
+    project_id = tenant_credentials.project_id_for(environment)
+    credentials = tenant_credentials.build_credentials(environment.get("sa_email"), _CLOUD_PLATFORM_SCOPE)
     cert_name = mapping.get("gcp_resources", {}).get("ssl_cert_name")
     if cert_name:
         try:
-            cert_status = compute_client.get_certificate_status(settings.GCP_PROJECT_ID, cert_name)
+            cert_status = compute_client.get_certificate_status(project_id, cert_name, credentials)
             mapping["gcp_resources"]["cert_status"] = cert_status
             if cert_status == compute_client.CERT_STATUS_ACTIVE:
                 mapping["status"] = "active"
@@ -127,15 +131,18 @@ async def refresh_mapping(mapping_id: str, tenant_id: str, environment_id: str,
 
 
 @router.post("/modules/url-mapping/api/mappings/{mapping_id}/delete")
-async def delete_mapping(mapping_id: str, tenant_id: str, environment_id: str,
+async def delete_mapping(request: Request, mapping_id: str, tenant_id: str, environment_id: str,
                           _: Dict[str, Any] = Depends(_api)):
     mappings = _get_mappings(tenant_id, environment_id)
     mapping = next((m for m in mappings if m["id"] == mapping_id), None)
     if mapping is None:
         raise HTTPException(status_code=404, detail="Mapping not found.")
 
+    environment = getattr(request.state, "environment", {}) or {}
+    project_id = tenant_credentials.project_id_for(environment)
+    credentials = tenant_credentials.build_credentials(environment.get("sa_email"), _CLOUD_PLATFORM_SCOPE)
     try:
-        compute_client.teardown_mapping(settings.GCP_PROJECT_ID, mapping.get("gcp_resources", {}))
+        compute_client.teardown_mapping(project_id, mapping.get("gcp_resources", {}), credentials=credentials)
     except Exception as e:
         logger.error("Failed to tear down URL mapping %s: %s", mapping_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to delete GCP resources: {e}")

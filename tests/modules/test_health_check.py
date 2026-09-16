@@ -102,7 +102,7 @@ def test_check_license_subscription_pass():
     gem = MagicMock()
     gem.list_license_configs.return_value = [{"name": "x"}]
     with patch("app.modules.health_check.checks.GeminiLicenseClient", return_value=gem):
-        result = checks.check_license_subscription()
+        result = checks.check_license_subscription({"sa_email": None, "gcp_project_id": "proj"})
     assert result["status"] == "pass"
 
 
@@ -110,7 +110,7 @@ def test_check_license_subscription_warn_when_empty():
     gem = MagicMock()
     gem.list_license_configs.return_value = []
     with patch("app.modules.health_check.checks.GeminiLicenseClient", return_value=gem):
-        result = checks.check_license_subscription()
+        result = checks.check_license_subscription({"sa_email": None, "gcp_project_id": "proj"})
     assert result["status"] == "warn"
 
 
@@ -118,7 +118,7 @@ def test_check_license_subscription_fail_on_error():
     gem = MagicMock()
     gem.list_license_configs.side_effect = RuntimeError("permission denied")
     with patch("app.modules.health_check.checks.GeminiLicenseClient", return_value=gem):
-        result = checks.check_license_subscription()
+        result = checks.check_license_subscription({"sa_email": None, "gcp_project_id": "proj"})
     assert result["status"] == "fail"
 
 
@@ -127,7 +127,7 @@ def test_check_dwd_connectivity_maps_success_flag():
     wc.test_dwd_connection.return_value = {"success": True, "message": "ok"}
     with patch("app.modules.health_check.checks.get_config", return_value={}), \
          patch("app.modules.health_check.checks.WorkspaceClient", return_value=wc):
-        result = checks.check_dwd_connectivity("t1", "env1")
+        result = checks.check_dwd_connectivity("t1", "env1", {"sa_email": None})
     assert result["status"] == "pass"
 
 
@@ -168,7 +168,7 @@ def test_run_all_checks_aggregates_counts():
          patch("app.modules.health_check.checks.check_dwd_connectivity", return_value=passing), \
          patch("app.modules.health_check.checks.check_firestore", return_value=passing), \
          patch("app.modules.health_check.checks.check_scheduler", return_value=None):
-        report = checks.run_all_checks("t1", "env1")
+        report = checks.run_all_checks("t1", "env1", {"sa_email": None, "gcp_project_id": "proj"})
     assert report["counts"] == {"pass": 6, "warn": 0, "fail": 0}
     assert len(report["checks"]) == 6
 

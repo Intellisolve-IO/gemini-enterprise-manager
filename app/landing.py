@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
+from app.core import tenant_credentials
 from app.core import tenants as tenants_db
 from app.core.module_config import get_module_config, update_module_config
 from app.core.modules import MODULES, get_module
@@ -40,6 +41,11 @@ class CreateEnvironmentPayload(BaseModel):
 
 class ToggleModulePayload(BaseModel):
     enabled: bool
+
+
+class UpdateEnvironmentPayload(BaseModel):
+    gcp_project_id: str = ""
+    sa_email: str = ""
 
 
 # -------------------------------------------------------------------------
@@ -146,3 +152,48 @@ async def toggle_module(module_id: str, payload: ToggleModulePayload, tenant_id:
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"success": True, "module_id": module_id, "enabled": bool(updated.get("enabled"))}
+
+
+# -------------------------------------------------------------------------
+# "/t/{tenant_id}/e/{environment_id}/settings" - environment-level GCP
+# project + tenant-owned service account, and a live "test connection" check.
+# This is NOT the full onboarding wizard (guided gcloud commands, blocking
+# verification before progression, topology choices) - just enough to
+# actually exercise the impersonation code path end-to-end for manual
+# testing. Always reachable regardless of which modules are enabled - it's
+# core environment config, not a module.
+# -------------------------------------------------------------------------
+@router.get("/t/{tenant_id}/e/{environment_id}/settings", response_class=HTMLResponse)
+async def environment_settings_view(request: Request, tenant_id: str, environment_id: str,
+                                     environment: Dict[str, Any] = Depends(require_environment())):
+    return render(request, "environment_settings.html", {
+        "active_page": "environment-settings",
+        "environment": environment,
+    })
+
+
+@router.post("/t/{tenant_id}/e/{environment_id}/settings")
+async def update_environment_settings(payload: UpdateEnvironmentPayload, tenant_id: str, environment_id: str,
+                                       _: Dict[str, Any] = Depends(require_environment())):
+    try:
+        updated = tenants_db.update_environment(tenant_id, environment_id, {
+            "gcp_project_id": payload.gcp_project_id.strip(),
+            "sa_email": payload.sa_email.strip(),
+        })
+    except Exception as e:
+        logger.error("Failed to update environment settings for tenant=%s environment=%s: %s",
+                      tenant_id, environment_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"success": True, "environment": updated}
+
+
+@router.post("/t/{tenant_id}/e/{environment_id}/settings/test-connection")
+async def test_environment_connection(tenant_id: str, environment_id: str,
+                                       environment: Dict[str, Any] = Depends(require_environment())):
+    """Confirm the central app can actually impersonate this environment's
+    configured service account (see app/core/tenant_credentials.py)."""
+    sa_email = environment.get("sa_email")
+    if not sa_email:
+        raise HTTPException(status_code=400, detail="Set a service account email first.")
+    project_id = tenant_credentials.project_id_for(environment)
+    return tenant_credentials.test_tenant_impersonation(sa_email, project_id)

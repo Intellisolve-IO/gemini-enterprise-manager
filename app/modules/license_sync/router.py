@@ -6,12 +6,13 @@ prefix, so every route here is environment-scoped; `tenant_id`/`environment_id`
 arrive as ordinary FastAPI path parameters (bound from that prefix) on every
 route function.
 
-Credential impersonation (acting as the environment's own tenant-owned service
-account rather than the central app's ambient identity) is not yet wired up -
-WorkspaceClient/GeminiLicenseClient/SchedulerService below still use
-self-impersonation, same as before the multi-tenant conversion. That's Phase 2
-of the multi-tenant conversion; see app/sync_worker.py's docstring for the
-same note.
+WorkspaceClient/GeminiLicenseClient calls below pass the environment's own
+sa_email (from Depends(_page)/Depends(_api), which returns the environment
+record) so they act as that environment's tenant-owned service account - or
+the central app's own identity when the environment hasn't registered one
+yet (sa_email empty, tenant-zero). SchedulerService still points at the one
+shared Cloud Scheduler job used before the multi-tenant conversion - the
+per-environment scheduling fan-out is later work.
 """
 import logging
 import re
@@ -26,6 +27,7 @@ from app.workspace_client import WorkspaceClient
 from app.gemini_licensing import GeminiLicenseClient, is_valid_config_name as gem_is_valid_config_name
 from app.sync_worker import run_license_sync
 from app.scheduler_service import SchedulerService
+from app.core import tenant_credentials
 from app.core.module_auth import require_module_enabled_api, require_module_enabled_page
 from app.core.rendering import render
 
@@ -91,7 +93,7 @@ async def dashboard_view(request: Request, tenant_id: str, environment_id: str,
 
 @router.get("/modules/license-sync/groups", response_class=HTMLResponse)
 async def groups_view(request: Request, tenant_id: str, environment_id: str,
-                       _: Dict[str, Any] = Depends(_page)):
+                       environment: Dict[str, Any] = Depends(_page)):
     """Google Groups selection view."""
     config = get_config(tenant_id, environment_id)
     monitored = config.get("monitored_groups", [])
@@ -100,7 +102,7 @@ async def groups_view(request: Request, tenant_id: str, environment_id: str,
     domain_groups = []
     error_msg = None
     try:
-        client = WorkspaceClient(delegated_admin_email=delegated_email)
+        client = WorkspaceClient(delegated_admin_email=delegated_email, sa_email=environment.get("sa_email"))
         domain_groups = client.list_domain_groups()
     except Exception as e:
         logger.error("Failed to query domain groups: %s", e)
@@ -133,13 +135,16 @@ async def schedule_view(request: Request, tenant_id: str, environment_id: str,
 
 @router.get("/modules/license-sync/settings", response_class=HTMLResponse)
 async def settings_view(request: Request, tenant_id: str, environment_id: str,
-                         _: Dict[str, Any] = Depends(_page)):
+                         environment: Dict[str, Any] = Depends(_page)):
     """System settings, DWD connectivity test, and Gemini license subscription picker."""
     config = get_config(tenant_id, environment_id)
     license_configs: List[Dict[str, Any]] = []
     license_error: Optional[str] = None
+    project_id = tenant_credentials.project_id_for(environment)
     try:
-        license_configs = GeminiLicenseClient().list_license_configs()
+        license_configs = GeminiLicenseClient(
+            project_id=project_id, sa_email=environment.get("sa_email")
+        ).list_license_configs()
         if not license_configs:
             license_error = (
                 "No Gemini Enterprise license subscriptions found in this project. "
@@ -261,7 +266,7 @@ async def update_notifications(payload: NotificationsPayload, tenant_id: str, en
 
 @router.post("/modules/license-sync/api/settings")
 async def save_settings(payload: SettingsPayload, tenant_id: str, environment_id: str,
-                         _: Dict[str, Any] = Depends(_api)):
+                         environment: Dict[str, Any] = Depends(_api)):
     """Update the delegated admin and the selected Gemini Enterprise license subscription."""
     updates: Dict[str, Any] = {"delegated_admin_email": payload.delegated_admin_email.strip()}
 
@@ -273,8 +278,11 @@ async def save_settings(payload: SettingsPayload, tenant_id: str, environment_id
                 detail=("Not a Gemini Enterprise license subscription "
                         "(projects/*/locations/*/licenseConfigs/*). Workspace product/SKU IDs are not supported."),
             )
+        project_id = tenant_credentials.project_id_for(environment)
         try:
-            available = {c["name"]: c for c in GeminiLicenseClient().list_license_configs()}
+            available = {c["name"]: c for c in GeminiLicenseClient(
+                project_id=project_id, sa_email=environment.get("sa_email")
+            ).list_license_configs()}
         except Exception as e:
             logger.error("Could not validate license_config against the project: %s", e)
             raise HTTPException(status_code=502, detail=f"Could not verify the subscription: {e}")
@@ -297,9 +305,9 @@ async def save_settings(payload: SettingsPayload, tenant_id: str, environment_id
 
 @router.post("/modules/license-sync/api/test-connection")
 async def test_dwd_connection(payload: DwdTestPayload, tenant_id: str, environment_id: str,
-                               _: Dict[str, Any] = Depends(_api)):
+                               environment: Dict[str, Any] = Depends(_api)):
     """Perform live connectivity check against Admin SDK Directory API using DWD."""
-    client = WorkspaceClient(delegated_admin_email=payload.delegated_admin_email)
+    client = WorkspaceClient(delegated_admin_email=payload.delegated_admin_email, sa_email=environment.get("sa_email"))
     result = client.test_dwd_connection(payload.delegated_admin_email)
     return result
 

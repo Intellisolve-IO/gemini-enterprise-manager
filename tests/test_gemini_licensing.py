@@ -43,10 +43,9 @@ def _client(get_map=None, post_payload=None):
 
     sess.get.side_effect = _get
     sess.post.side_effect = lambda url, headers=None, json=None, timeout=None: _Resp(post_payload or {})
-    with patch("app.gemini_licensing.google.auth.default", return_value=(MagicMock(), "proj")), \
-         patch("app.gemini_licensing.AuthorizedSession", return_value=sess):
+    with patch("app.gemini_licensing.AuthorizedSession", return_value=sess):
         c = gl.GeminiLicenseClient(project_id="acme")
-        c._session = sess
+        c._session = sess  # session already set, so _sess() never calls tenant_credentials.build_credentials
         return c, sess
 
 
