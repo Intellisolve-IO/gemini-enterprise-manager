@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Gemini Enterprise Admin Console{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Gemini Enterprise Admin Console</h1>
+        <p class="text-sm text-slate-500 mt-1">
+            Enable the modules you need. Each one has its own management page once switched on.
+        </p>
+    </div>
+
+    <!-- Module Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        {% for m in modules %}
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between" data-module-id="{{ m.id }}">
+            <div>
+                <div class="flex items-start justify-between mb-3">
+                    <div class="w-12 h-12 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
+                        <i class="{{ m.icon }}"></i>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" class="sr-only peer module-toggle" {% if m.enabled %}checked{% endif %} onchange="toggleModule('{{ m.id }}', this)">
+                        <div class="w-10 h-6 bg-slate-200 rounded-full peer peer-checked:bg-blue-600 transition-colors relative">
+                            <div class="absolute top-0.5 left-0.5 bg-white w-5 h-5 rounded-full transition-transform peer-checked:translate-x-4"></div>
+                        </div>
+                    </label>
+                </div>
+                <p class="text-base font-bold text-slate-900">{{ m.title }}</p>
+                <p class="text-xs text-slate-500 mt-1 leading-relaxed">{{ m.description }}</p>
+                <span class="module-status inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold mt-3 {% if m.enabled %}bg-emerald-100 text-emerald-800{% else %}bg-slate-100 text-slate-500{% endif %}">
+                    {{ "Enabled" if m.enabled else "Disabled" }}
+                </span>
+            </div>
+            <div class="mt-4">
+                {% if m.enabled %}
+                <a href="{{ m.base_path }}" class="module-open-link inline-flex items-center justify-center w-full px-3 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                    Open <i class="fa-solid fa-arrow-right ml-2 text-xs"></i>
+                </a>
+                {% else %}
+                <span class="module-open-link inline-flex items-center justify-center w-full px-3 py-2 border border-slate-200 text-sm font-medium rounded-lg text-slate-400 bg-slate-50 cursor-not-allowed" title="Enable this module to open it">
+                    Open <i class="fa-solid fa-arrow-right ml-2 text-xs"></i>
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function toggleModule(moduleId, checkbox) {
+        const card = checkbox.closest('[data-module-id]');
+        const statusPill = card.querySelector('.module-status');
+        const enabled = checkbox.checked;
+
+        try {
+            const response = await fetch(`/api/modules/${moduleId}/toggle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            });
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                showToast(`Module ${enabled ? 'enabled' : 'disabled'}.`, 'success');
+                setTimeout(() => { window.location.reload(); }, 700);
+            } else {
+                checkbox.checked = !enabled;
+                showToast(`Failed to update module: ${data.detail || data.message || 'unknown error'}`, 'error');
+            }
+        } catch (err) {
+            checkbox.checked = !enabled;
+            showToast('Network error while updating module: ' + err.message, 'error');
+        }
+    }
+
+    // Surface the "why did I land here" toast when a disabled module redirected us.
+    document.addEventListener('DOMContentLoaded', () => {
+        const params = new URLSearchParams(window.location.search);
+        const disabled = params.get('disabled_module');
+        if (disabled) {
+            showToast(`The "${disabled}" module is currently disabled. Enable it below to open it.`, 'warning');
+        }
+    });
+</script>
+{% endblock %}

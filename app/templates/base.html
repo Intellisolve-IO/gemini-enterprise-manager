@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Gemini Enterprise License Provisioner{% endblock %}</title>
+    <title>{% block title %}Gemini Enterprise Admin Console{% endblock %}</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -39,34 +39,21 @@
                             <i class="fa-solid fa-sparkles text-lg"></i>
                         </div>
                         <div class="flex flex-col">
-                            <span class="text-base font-bold text-slate-900 leading-none">Gemini Provisioner</span>
+                            <span class="text-base font-bold text-slate-900 leading-none">Gemini Enterprise Admin Console</span>
                             <span class="text-xs text-slate-500 font-normal">Google Workspace &bull; GCP {{ gcp_project_id }}</span>
                         </div>
                     </a>
 
                     <div class="hidden md:flex space-x-1">
-                        <a href="/" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'dashboard' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                            <i class="fa-solid fa-chart-pie mr-1.5 opacity-80"></i> Dashboard
+                        {% for m in enabled_modules %}
+                        <a href="{{ m.base_path }}" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == m.id %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
+                            <i class="{{ m.icon }} mr-1.5 opacity-80"></i> {{ m.title }}
                         </a>
-                        <a href="/groups" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'groups' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                            <i class="fa-solid fa-users mr-1.5 opacity-80"></i> Monitored Groups
-                        </a>
-                        <a href="/schedule" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'schedule' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                            <i class="fa-regular fa-clock mr-1.5 opacity-80"></i> Sync Schedule
-                        </a>
-                        <a href="/history" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'history' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                            <i class="fa-solid fa-clock-rotate-left mr-1.5 opacity-80"></i> Run History
-                        </a>
-                        <a href="/settings" class="px-3 py-2 rounded-md text-sm font-medium {% if active_page == 'settings' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:text-slate-900 hover:bg-slate-100{% endif %}">
-                            <i class="fa-solid fa-gear mr-1.5 opacity-80"></i> Settings & Test
-                        </a>
+                        {% endfor %}
                     </div>
                 </div>
 
                 <div class="flex items-center space-x-4">
-                    <button id="nav-sync-btn" onclick="triggerManualSync()" class="inline-flex items-center px-3.5 py-1.5 border border-transparent text-xs font-semibold rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
-                        <i class="fa-solid fa-arrows-rotate mr-1.5"></i> Run Sync Now
-                    </button>
                     {% if principal %}
                     <span class="hidden sm:inline-flex items-center text-xs text-slate-500" title="Signed in via Identity-Aware Proxy (Workspace super admin)">
                         <i class="fa-solid fa-user-shield mr-1.5 text-slate-400"></i>{{ principal }}
@@ -91,8 +78,8 @@
     <!-- Footer -->
     <footer class="bg-white border-t border-slate-200 mt-auto py-4">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center text-xs text-slate-500">
-            <div>Google Workspace Gemini Enterprise Automated Provisioner &bull; GCP Cloud Run &amp; Cloud Scheduler</div>
-            <div>Automated License Provisioning Engine</div>
+            <div>Gemini Enterprise Admin Console &bull; GCP Cloud Run &amp; Cloud Scheduler</div>
+            <div>Modular Admin Tooling for Gemini Enterprise</div>
         </div>
     </footer>
 
@@ -101,12 +88,12 @@
         function showToast(message, type = 'info') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
-            
-            const bgClass = type === 'success' ? 'bg-emerald-600 text-white' : 
-                            type === 'error' ? 'bg-rose-600 text-white' : 
+
+            const bgClass = type === 'success' ? 'bg-emerald-600 text-white' :
+                            type === 'error' ? 'bg-rose-600 text-white' :
                             type === 'warning' ? 'bg-amber-500 text-white' : 'bg-slate-800 text-white';
-            const icon = type === 'success' ? 'fa-circle-check' : 
-                         type === 'error' ? 'fa-circle-xmark' : 
+            const icon = type === 'success' ? 'fa-circle-check' :
+                         type === 'error' ? 'fa-circle-xmark' :
                          type === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-info';
 
             toast.className = `toast-enter pointer-events-auto p-4 rounded-lg shadow-lg flex items-start space-x-3 text-sm font-medium ${bgClass}`;
@@ -123,10 +110,15 @@
         }
 
         async function triggerManualSync() {
+            // Not every page has its own "nav-sync-btn" element (only the License
+            // Sync module's pages do) - guard so this still works when there's
+            // nothing local to update the state of.
             const btn = document.getElementById('nav-sync-btn');
-            const originalHTML = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin mr-1.5"></i> Syncing...`;
+            const originalHTML = btn ? btn.innerHTML : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin mr-1.5"></i> Syncing...`;
+            }
             showToast('Triggering Gemini license synchronization in background...', 'info');
 
             try {
@@ -136,7 +128,7 @@
                     body: JSON.stringify({ triggered_by: 'admin_ui' })
                 });
                 const result = await response.json();
-                
+
                 if (response.ok && (result.status === 'SUCCESS' || result.status === 'PARTIAL_SUCCESS')) {
                     showToast(`Sync Finished (${result.status}): Evaluated ${result.evaluated_users_count} user(s), Assigned ${result.licenses_assigned_count}, Errors: ${result.errors_count}.`, 'success');
                     setTimeout(() => { window.location.reload(); }, 2000);
@@ -146,8 +138,10 @@
             } catch (err) {
                 showToast('Failed to contact sync service: ' + err.message, 'error');
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHTML;
+                }
             }
         }
     </script>

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{# Every License Sync page extends this instead of base.html directly, so they
+   share a sub-nav strip for the module's own pages. Set `license_sync_page` in
+   the route's context to highlight the active tab, and use `module_content`
+   (not `content`) for the page body. A page with a modal dialog should put it in
+   the `modal` block instead of `module_content`, so it isn't nested inside the
+   space-y-6 wrapper (which would offset a `position: fixed` modal via margin). #}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-wrap gap-1 bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm w-fit">
+        <a href="/modules/license-sync" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if license_sync_page == 'dashboard' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+            <i class="fa-solid fa-chart-pie mr-1.5 opacity-80"></i> Dashboard
+        </a>
+        <a href="/groups" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if license_sync_page == 'groups' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+            <i class="fa-solid fa-users mr-1.5 opacity-80"></i> Monitored Groups
+        </a>
+        <a href="/schedule" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if license_sync_page == 'schedule' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+            <i class="fa-regular fa-clock mr-1.5 opacity-80"></i> Sync Schedule
+        </a>
+        <a href="/history" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if license_sync_page == 'history' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+            <i class="fa-solid fa-clock-rotate-left mr-1.5 opacity-80"></i> Run History
+        </a>
+        <a href="/settings" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if license_sync_page == 'settings' %}bg-blue-50 text-blue-700{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+            <i class="fa-solid fa-gear mr-1.5 opacity-80"></i> Settings & Test
+        </a>
+    </div>
+
+    {% block module_content %}{% endblock %}
+</div>
+{% block modal %}{% endblock %}
+{% endblock %}
