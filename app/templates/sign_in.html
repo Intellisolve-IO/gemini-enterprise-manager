@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In &bull; Gemini Enterprise Admin Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="h-full flex items-center justify-center font-sans text-slate-800 antialiased bg-slate-50">
+    <div id="toast-container" class="fixed top-6 right-6 z-50 space-y-2 max-w-md w-full pointer-events-none"></div>
+
+    <div class="w-full max-w-sm px-4">
+        <div class="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm text-center space-y-6">
+            <div class="w-14 h-14 mx-auto rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-sm">
+                <i class="fa-solid fa-sparkles text-2xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold text-slate-900">Gemini Enterprise Admin Console</h1>
+                <p class="text-sm text-slate-500 mt-1">Sign in with Google to continue.</p>
+            </div>
+            <button id="sign-in-btn" onclick="signIn()" class="w-full inline-flex items-center justify-center px-4 py-2.5 border border-slate-300 text-sm font-semibold rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                <i class="fa-brands fa-google mr-2 text-slate-500"></i> Sign in with Google
+            </button>
+            <p id="sign-in-error" class="hidden text-xs text-rose-600"></p>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+    <script>
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const bgClass = type === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white';
+            toast.className = `p-4 rounded-lg shadow-lg text-sm font-medium ${bgClass}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 6000);
+        }
+
+        const firebaseConfig = {
+            apiKey: "{{ firebase_api_key }}",
+            authDomain: "{{ firebase_auth_domain }}",
+            projectId: "{{ firebase_project_id }}",
+        };
+        firebase.initializeApp(firebaseConfig);
+
+        async function signIn() {
+            const btn = document.getElementById('sign-in-btn');
+            const errBox = document.getElementById('sign-in-error');
+            errBox.classList.add('hidden');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Signing in...`;
+
+            try {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                const result = await firebase.auth().signInWithPopup(provider);
+                const idToken = await result.user.getIdToken();
+
+                const response = await fetch('/auth/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_token: idToken }),
+                });
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(data.detail || 'Could not create a session.');
+                }
+                window.location.href = '/';
+            } catch (err) {
+                errBox.textContent = err.message || String(err);
+                errBox.classList.remove('hidden');
+                showToast('Sign-in failed: ' + (err.message || err), 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-brands fa-google mr-2 text-slate-500"></i> Sign in with Google`;
+            }
+        }
+    </script>
+</body>
+</html>

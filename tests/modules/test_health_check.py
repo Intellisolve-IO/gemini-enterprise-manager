@@ -8,9 +8,27 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
+from app.core.session_auth import SESSION_COOKIE_NAME
 from app.modules.health_check import checks
 
-client = TestClient(app)
+_USER = {"uid": "u1", "email": "admin@example.com"}
+_MEMBER = {"uid": "u1", "role": "owner", "email": "admin@example.com"}
+_ENVIRONMENT = {"id": "env1", "tenant_id": "t1", "display_name": "Prod"}
+_PREFIX = "/t/t1/e/env1"
+
+
+def _client():
+    c = TestClient(app, follow_redirects=False)
+    c.cookies.set(SESSION_COOKIE_NAME, "fake-cookie")
+    return c
+
+
+def _auth_mocks():
+    return (
+        patch("app.core.session_auth.verify_session_cookie", return_value=_USER),
+        patch("app.core.tenants.get_member", return_value=_MEMBER),
+        patch("app.core.tenants.get_environment", return_value=_ENVIRONMENT),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -109,26 +127,25 @@ def test_check_dwd_connectivity_maps_success_flag():
     wc.test_dwd_connection.return_value = {"success": True, "message": "ok"}
     with patch("app.modules.health_check.checks.get_config", return_value={}), \
          patch("app.modules.health_check.checks.WorkspaceClient", return_value=wc):
-        result = checks.check_dwd_connectivity()
+        result = checks.check_dwd_connectivity("t1", "env1")
     assert result["status"] == "pass"
 
 
 def test_check_firestore_pass():
-    db = MagicMock()
-    with patch("app.modules.health_check.checks.get_firestore_client", return_value=db):
-        result = checks.check_firestore()
+    with patch("app.modules.health_check.checks.get_config", return_value={}):
+        result = checks.check_firestore("t1", "env1")
     assert result["status"] == "pass"
 
 
 def test_check_firestore_fail():
-    with patch("app.modules.health_check.checks.get_firestore_client", side_effect=RuntimeError("no creds")):
-        result = checks.check_firestore()
+    with patch("app.modules.health_check.checks.get_config", side_effect=RuntimeError("no creds")):
+        result = checks.check_firestore("t1", "env1")
     assert result["status"] == "fail"
 
 
 def test_check_scheduler_skipped_when_license_sync_disabled():
     with patch("app.modules.health_check.checks.is_module_enabled", return_value=False):
-        assert checks.check_scheduler() is None
+        assert checks.check_scheduler("t1", "env1") is None
 
 
 def test_check_scheduler_pass_when_available():
@@ -138,7 +155,7 @@ def test_check_scheduler_pass_when_available():
     }
     with patch("app.modules.health_check.checks.is_module_enabled", return_value=True), \
          patch("app.modules.health_check.checks.SchedulerService", return_value=sched):
-        result = checks.check_scheduler()
+        result = checks.check_scheduler("t1", "env1")
     assert result["status"] == "pass"
 
 
@@ -151,7 +168,7 @@ def test_run_all_checks_aggregates_counts():
          patch("app.modules.health_check.checks.check_dwd_connectivity", return_value=passing), \
          patch("app.modules.health_check.checks.check_firestore", return_value=passing), \
          patch("app.modules.health_check.checks.check_scheduler", return_value=None):
-        report = checks.run_all_checks()
+        report = checks.run_all_checks("t1", "env1")
     assert report["counts"] == {"pass": 6, "warn": 0, "fail": 0}
     assert len(report["checks"]) == 6
 
@@ -168,31 +185,37 @@ _PASSING_REPORT = {
 
 
 def test_health_check_page_disabled_redirects():
-    with patch("app.core.module_auth.is_module_enabled", return_value=False):
-        r = client.get("/modules/health-check", follow_redirects=False)
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, patch("app.core.module_auth.is_module_enabled", return_value=False):
+        r = _client().get(f"{_PREFIX}/modules/health-check")
     assert r.status_code == 303
-    assert r.headers["location"] == "/?disabled_module=health-check"
+    assert r.headers["location"] == f"{_PREFIX}/?disabled_module=health-check"
 
 
 def test_health_check_page_renders_when_enabled():
-    with patch("app.core.module_auth.is_module_enabled", return_value=True), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.core.module_auth.is_module_enabled", return_value=True), \
          patch("app.modules.health_check.router.run_all_checks", return_value=_PASSING_REPORT), \
          patch("app.modules.health_check.router.update_module_config"):
-        r = client.get("/modules/health-check")
+        r = _client().get(f"{_PREFIX}/modules/health-check")
     assert r.status_code == 200
     assert "Gemini Enterprise Health Check" in r.text
 
 
 def test_health_check_rerun_api_disabled_403():
-    with patch("app.core.module_auth.is_module_enabled", return_value=False):
-        r = client.post("/modules/health-check/api/run")
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, patch("app.core.module_auth.is_module_enabled", return_value=False):
+        r = _client().post(f"{_PREFIX}/modules/health-check/api/run")
     assert r.status_code == 403
 
 
 def test_health_check_rerun_api_enabled_returns_report():
-    with patch("app.core.module_auth.is_module_enabled", return_value=True), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.core.module_auth.is_module_enabled", return_value=True), \
          patch("app.modules.health_check.router.run_all_checks", return_value=_PASSING_REPORT), \
          patch("app.modules.health_check.router.update_module_config"):
-        r = client.post("/modules/health-check/api/run")
+        r = _client().post(f"{_PREFIX}/modules/health-check/api/run")
     assert r.status_code == 200
     assert r.json()["counts"]["pass"] == 1

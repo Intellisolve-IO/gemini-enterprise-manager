@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from app.config import settings
 from app.core.module_config import is_module_enabled
-from app.firestore_db import get_config, get_firestore_client
+from app.firestore_db import get_config
 from app.gemini_licensing import GeminiLicenseClient
 from app.modules.health_check import iam_client
 from app.scheduler_service import SchedulerService
@@ -150,28 +150,31 @@ def check_license_subscription() -> Dict[str, Any]:
                     f"{len(configs)} subscription(s) found.")
 
 
-def check_dwd_connectivity() -> Dict[str, Any]:
-    delegated_email = get_config().get("delegated_admin_email", settings.DELEGATED_ADMIN_EMAIL)
+def check_dwd_connectivity(tenant_id: str, environment_id: str) -> Dict[str, Any]:
+    delegated_email = get_config(tenant_id, environment_id).get("delegated_admin_email", "")
     result = WorkspaceClient(delegated_admin_email=delegated_email).test_dwd_connection(delegated_email)
     status_ = "pass" if result.get("success") else "fail"
     return _result("dwd_connectivity", "Domain-Wide Delegation Connectivity", status_,
                     result.get("message", ""), result.get("guidance"))
 
 
-def check_firestore() -> Dict[str, Any]:
+def check_firestore(tenant_id: str, environment_id: str) -> Dict[str, Any]:
     try:
-        db = get_firestore_client()
-        db.collection(settings.CONFIG_COLLECTION).document(settings.CONFIG_DOC_ID).get()
+        get_config(tenant_id, environment_id)
     except Exception as e:
         return _result("firestore", "Firestore Reachability", "fail", f"Could not reach Firestore: {e}",
                         "Confirm roles/datastore.user is granted and a Native-mode database exists.")
     return _result("firestore", "Firestore Reachability", "pass", "Firestore is reachable.")
 
 
-def check_scheduler() -> Optional[Dict[str, Any]]:
+def check_scheduler(tenant_id: str, environment_id: str) -> Optional[Dict[str, Any]]:
     """Only meaningful if the license-sync module (the only scheduled feature
-    today) is enabled."""
-    if not is_module_enabled("license-sync"):
+    today) is enabled for this environment. NOTE: today every environment
+    shares the same single Cloud Scheduler job (the per-environment scheduling
+    fan-out is Phase 5, not yet built), so this check's result is currently
+    identical across environments - see license_sync/router.py's
+    update_sync_schedule() for the same caveat."""
+    if not is_module_enabled(tenant_id, environment_id, "license-sync"):
         return None
     try:
         status_info = SchedulerService().get_schedule()
@@ -186,17 +189,23 @@ def check_scheduler() -> Optional[Dict[str, Any]]:
                     status_info.get("error", "Scheduler job not found or not yet created."))
 
 
-def run_all_checks() -> Dict[str, Any]:
-    """Run every check and return {checks, counts, ran_at}."""
+def run_all_checks(tenant_id: str, environment_id: str) -> Dict[str, Any]:
+    """Run every check for one environment and return {checks, counts, ran_at}.
+
+    check_iam_roles/check_self_impersonation/check_apis_enabled audit the
+    *central app's own* runtime identity/project, not yet the environment's
+    tenant-owned service account - that per-environment credential/IAM
+    inspection is Phase 2 of the multi-tenant conversion (see
+    app/sync_worker.py's docstring for the same note)."""
     checks = [
         check_iam_roles(),
         check_self_impersonation(),
         check_apis_enabled(),
         check_license_subscription(),
-        check_dwd_connectivity(),
-        check_firestore(),
+        check_dwd_connectivity(tenant_id, environment_id),
+        check_firestore(tenant_id, environment_id),
     ]
-    scheduler_check = check_scheduler()
+    scheduler_check = check_scheduler(tenant_id, environment_id)
     if scheduler_check:
         checks.append(scheduler_check)
 

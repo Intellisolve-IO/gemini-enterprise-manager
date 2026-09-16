@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -20,6 +20,9 @@ router = APIRouter()
 _MODULE_ID = "url-mapping"
 _DEFAULTS = {"enabled": False, "mappings": []}
 
+_page = require_module_enabled_page(_MODULE_ID)
+_api = require_module_enabled_api(_MODULE_ID)
+
 
 class CreateMappingPayload(BaseModel):
     custom_domain: str
@@ -30,29 +33,26 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_mappings() -> List[Dict[str, Any]]:
-    return get_module_config(_MODULE_ID, _DEFAULTS).get("mappings", [])
+def _get_mappings(tenant_id: str, environment_id: str) -> List[Dict[str, Any]]:
+    return get_module_config(tenant_id, environment_id, _MODULE_ID, _DEFAULTS).get("mappings", [])
 
 
-def _save_mappings(mappings: List[Dict[str, Any]]) -> None:
-    update_module_config(_MODULE_ID, {"mappings": mappings}, _DEFAULTS)
+def _save_mappings(tenant_id: str, environment_id: str, mappings: List[Dict[str, Any]]) -> None:
+    update_module_config(tenant_id, environment_id, _MODULE_ID, {"mappings": mappings}, _DEFAULTS)
 
 
 @router.get("/modules/url-mapping", response_class=HTMLResponse)
-async def url_mapping_view(
-    request: Request, principal: Optional[str] = Depends(require_module_enabled_page(_MODULE_ID))
-):
+async def url_mapping_view(request: Request, tenant_id: str, environment_id: str,
+                            _: Dict[str, Any] = Depends(_page)):
     return render(request, "url_mapping/index.html", {
         "active_page": _MODULE_ID,
-        "mappings": _get_mappings(),
-        "principal": principal,
+        "mappings": _get_mappings(tenant_id, environment_id),
     })
 
 
 @router.post("/modules/url-mapping/api/mappings")
-async def create_mapping(
-    payload: CreateMappingPayload, principal: Optional[str] = Depends(require_module_enabled_api(_MODULE_ID))
-):
+async def create_mapping(payload: CreateMappingPayload, request: Request, tenant_id: str, environment_id: str,
+                          _: Dict[str, Any] = Depends(_api)):
     custom_domain = payload.custom_domain.strip().lower()
     target_deep_link = payload.target_deep_link.strip()
     if not custom_domain:
@@ -62,22 +62,27 @@ async def create_mapping(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    firebase_user = getattr(request.state, "firebase_user", None) or {}
     mapping_id = uuid.uuid4().hex[:12]
     mapping: Dict[str, Any] = {
         "id": mapping_id,
         "custom_domain": custom_domain,
         "target_deep_link": target_deep_link,
-        "created_by": principal or "unknown",
+        "created_by": firebase_user.get("email", "unknown"),
         "created_at": _now(),
         "status": "provisioning",
         "gcp_resources": {},
         "last_checked_at": None,
         "last_error": None,
     }
-    mappings = _get_mappings()
+    mappings = _get_mappings(tenant_id, environment_id)
     mappings.append(mapping)
-    _save_mappings(mappings)
+    _save_mappings(tenant_id, environment_id, mappings)
 
+    # NOTE: still provisions against the central app's own GCP project
+    # (settings.GCP_PROJECT_ID), not yet the environment's own tenant-owned
+    # project via impersonated credentials - that's Phase 2 of the
+    # multi-tenant conversion (see app/sync_worker.py's docstring).
     try:
         mapping["gcp_resources"] = compute_client.provision_mapping(
             settings.GCP_PROJECT_ID, mapping_id, custom_domain, target_deep_link
@@ -89,16 +94,15 @@ async def create_mapping(
         mapping["last_error"] = str(e)
 
     mapping["last_checked_at"] = _now()
-    _save_mappings(mappings)  # `mapping` is the same object referenced inside `mappings`
+    _save_mappings(tenant_id, environment_id, mappings)  # `mapping` is the same object referenced inside `mappings`
 
     return {"success": mapping["status"] != "failed", "mapping": mapping}
 
 
 @router.post("/modules/url-mapping/api/mappings/{mapping_id}/refresh")
-async def refresh_mapping(
-    mapping_id: str, _: Optional[str] = Depends(require_module_enabled_api(_MODULE_ID))
-):
-    mappings = _get_mappings()
+async def refresh_mapping(mapping_id: str, tenant_id: str, environment_id: str,
+                           _: Dict[str, Any] = Depends(_api)):
+    mappings = _get_mappings(tenant_id, environment_id)
     mapping = next((m for m in mappings if m["id"] == mapping_id), None)
     if mapping is None:
         raise HTTPException(status_code=404, detail="Mapping not found.")
@@ -118,15 +122,14 @@ async def refresh_mapping(
         except Exception as e:
             mapping["last_error"] = str(e)
     mapping["last_checked_at"] = _now()
-    _save_mappings(mappings)
+    _save_mappings(tenant_id, environment_id, mappings)
     return {"success": True, "mapping": mapping}
 
 
 @router.post("/modules/url-mapping/api/mappings/{mapping_id}/delete")
-async def delete_mapping(
-    mapping_id: str, _: Optional[str] = Depends(require_module_enabled_api(_MODULE_ID))
-):
-    mappings = _get_mappings()
+async def delete_mapping(mapping_id: str, tenant_id: str, environment_id: str,
+                          _: Dict[str, Any] = Depends(_api)):
+    mappings = _get_mappings(tenant_id, environment_id)
     mapping = next((m for m in mappings if m["id"] == mapping_id), None)
     if mapping is None:
         raise HTTPException(status_code=404, detail="Mapping not found.")
@@ -138,5 +141,5 @@ async def delete_mapping(
         raise HTTPException(status_code=500, detail=f"Failed to delete GCP resources: {e}")
 
     remaining = [m for m in mappings if m["id"] != mapping_id]
-    _save_mappings(remaining)
+    _save_mappings(tenant_id, environment_id, remaining)
     return {"success": True}

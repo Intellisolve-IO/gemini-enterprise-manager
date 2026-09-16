@@ -15,8 +15,11 @@ class ModuleMeta:
     title: str
     icon: str            # FontAwesome class, e.g. "fa-solid fa-id-badge"
     description: str
-    base_path: str        # where the landing page's "Open" link goes
+    base_path_suffix: str  # appended to "/t/{tenant_id}/e/{environment_id}", e.g. "/modules/license-sync"
     default_enabled: bool = False
+
+    def base_path(self, tenant_id: str, environment_id: str) -> str:
+        return f"/t/{tenant_id}/e/{environment_id}{self.base_path_suffix}"
 
 
 MODULES: List[ModuleMeta] = [
@@ -25,7 +28,7 @@ MODULES: List[ModuleMeta] = [
         title="License Sync",
         icon="fa-solid fa-id-badge",
         description="Assign Gemini Enterprise licenses from Google Group membership.",
-        base_path="/modules/license-sync",
+        base_path_suffix="/modules/license-sync",
         default_enabled=True,
     ),
     ModuleMeta(
@@ -33,7 +36,7 @@ MODULES: List[ModuleMeta] = [
         title="App URL Mapping",
         icon="fa-solid fa-link",
         description="Map a custom domain to a Gemini Enterprise app deep link.",
-        base_path="/modules/url-mapping",
+        base_path_suffix="/modules/url-mapping",
         default_enabled=False,
     ),
     ModuleMeta(
@@ -41,7 +44,7 @@ MODULES: List[ModuleMeta] = [
         title="Agent Deployment",
         icon="fa-solid fa-robot",
         description="Register an agent into Gemini Enterprise.",
-        base_path="/modules/agent-deployment",
+        base_path_suffix="/modules/agent-deployment",
         default_enabled=False,
     ),
     ModuleMeta(
@@ -49,7 +52,7 @@ MODULES: List[ModuleMeta] = [
         title="Health Check",
         icon="fa-solid fa-heart-pulse",
         description="Audit GE-related IAM, API enablement, licensing, and DWD connectivity.",
-        base_path="/modules/health-check",
+        base_path_suffix="/modules/health-check",
         default_enabled=False,
     ),
 ]
@@ -61,10 +64,16 @@ def get_module(module_id: str) -> Optional[ModuleMeta]:
     return _BY_ID.get(module_id)
 
 
-def enabled_modules_context() -> List[Dict[str, Any]]:
-    """Enabled modules, in registry order, as plain dicts for template rendering."""
+def enabled_modules_context(tenant_id: str, environment_id: str) -> List[Dict[str, Any]]:
+    """Enabled modules for this environment, in registry order, as plain dicts
+    for template rendering."""
     out: List[Dict[str, Any]] = []
     for m in MODULES:
-        if is_module_enabled(m.id):
-            out.append({"id": m.id, "title": m.title, "icon": m.icon, "base_path": m.base_path})
+        if is_module_enabled(tenant_id, environment_id, m.id):
+            out.append({
+                "id": m.id,
+                "title": m.title,
+                "icon": m.icon,
+                "base_path": m.base_path(tenant_id, environment_id),
+            })
     return out

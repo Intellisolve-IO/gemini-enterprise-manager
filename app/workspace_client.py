@@ -31,7 +31,7 @@ class WorkspaceClient:
     """Client for interacting with Google Workspace Admin Directory and Licensing APIs."""
 
     def __init__(self, delegated_admin_email: Optional[str] = None):
-        self.delegated_admin_email = delegated_admin_email or settings.DELEGATED_ADMIN_EMAIL
+        self.delegated_admin_email = delegated_admin_email or ""
 
     def get_credentials(self, subject_email: Optional[str] = None,
                         scopes: Optional[List[str]] = None):

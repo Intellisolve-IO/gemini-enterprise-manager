@@ -6,63 +6,70 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.config import settings
+from app.core.session_auth import SESSION_COOKIE_NAME
 
-client = TestClient(app)
+client = TestClient(app, follow_redirects=False)
+
+_USER = {"uid": "u1", "email": "boss@example.com"}
+_MEMBER = {"uid": "u1", "role": "owner", "email": "boss@example.com"}
+_ENVIRONMENT = {"id": "env1", "tenant_id": "t1", "display_name": "Prod"}
+
+_PREFIX = "/t/t1/e/env1"
 
 
-def test_iap_enforced_blocks_unauthenticated(monkeypatch):
-    """With IAP_AUDIENCE set, pages and mutating APIs require an IAP assertion."""
-    monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
-    assert client.get("/").status_code == 401
-    assert client.get("/modules/license-sync").status_code == 401
-    assert client.post("/modules/license-sync/api/settings", json={
+def _signed_in_client():
+    c = TestClient(app, follow_redirects=False)
+    c.cookies.set(SESSION_COOKIE_NAME, "fake-cookie")
+    return c
+
+
+def _auth_mocks():
+    """The three dependencies every environment-scoped route resolves through,
+    ahead of any module-specific logic. license-sync's own `is_module_enabled`
+    check is left unmocked deliberately - it fails open to its registry default
+    (True) when Firestore isn't reachable, exactly like it would for a fresh,
+    never-toggled environment."""
+    return (
+        patch("app.core.session_auth.verify_session_cookie", return_value=_USER),
+        patch("app.core.tenants.get_member", return_value=_MEMBER),
+        patch("app.core.tenants.get_environment", return_value=_ENVIRONMENT),
+    )
+
+
+def test_unauthenticated_blocks_access():
+    """No session cookie: pages and mutating APIs 401."""
+    assert client.get(f"{_PREFIX}/modules/license-sync").status_code == 401
+    assert client.post(f"{_PREFIX}/modules/license-sync/api/settings", json={
         "delegated_admin_email": "a@b.com", "license_config": ""
     }).status_code == 401
     # health probe stays open for Cloud Run
     assert client.get("/healthz").status_code == 200
 
 
-def test_iap_enforced_allows_super_admin(monkeypatch):
-    monkeypatch.setattr(settings, "IAP_AUDIENCE", "test-aud")
-    monkeypatch.setattr("app.auth._verify_iap_assertion", lambda a: {"email": "boss@example.com"})
-    monkeypatch.setattr("app.auth.is_super_admin", lambda e: True)
+def test_non_member_blocked_with_403():
+    m1, m2, m3 = _auth_mocks()
+    with m1, patch("app.core.tenants.get_member", return_value=None):
+        r = _signed_in_client().get(f"{_PREFIX}/modules/license-sync")
+    assert r.status_code == 403
 
-    # The landing page (now "/") shows the signed-in principal in the nav.
-    r = client.get("/", headers={"x-goog-iap-jwt-assertion": "tok"})
-    assert r.status_code == 200
-    assert "boss@example.com" in r.text
 
-    # The License Sync dashboard moved to /modules/license-sync.
+def test_authenticated_member_sees_principal_in_nav():
+    m1, m2, m3 = _auth_mocks()
     mock_config = {
         "monitored_groups": [], "license_config": "", "license_label": "",
         "delegated_admin_email": "admin@example.com", "cron_expression": "0 2 * * *",
         "notification_emails": [], "notify_on": "failures",
     }
-    with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.get_sync_history", return_value=[]):
-        r = client.get("/modules/license-sync", headers={"x-goog-iap-jwt-assertion": "tok"})
-        assert r.status_code == 200
-        assert "boss@example.com" in r.text
-
-
-def test_healthz():
-    """Verify healthcheck probe returns 200."""
-    response = client.get("/healthz")
-    assert response.status_code == 200
-    assert response.json()["status"] == "healthy"
-
-
-def test_landing_page_lists_license_sync_module():
-    """The landing page renders the module grid, with license-sync enabled by default."""
-    response = client.get("/")
-    assert response.status_code == 200
-    assert "Gemini Enterprise Admin Console" in response.text
-    assert "License Sync" in response.text
+        r = _signed_in_client().get(f"{_PREFIX}/modules/license-sync")
+    assert r.status_code == 200
+    assert "boss@example.com" in r.text
 
 
 def test_dashboard_route():
-    """Verify the License Sync dashboard (now at /modules/license-sync) renders HTML."""
+    """Verify the License Sync dashboard renders HTML."""
     mock_config = {
         "monitored_groups": ["team@example.com"],
         "license_config": "",
@@ -70,9 +77,11 @@ def test_dashboard_route():
         "delegated_admin_email": "admin@example.com",
         "cron_expression": "0 2 * * *"
     }
-    with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.get_sync_history", return_value=[]):
-        response = client.get("/modules/license-sync")
+        response = _signed_in_client().get(f"{_PREFIX}/modules/license-sync")
         assert response.status_code == 200
         assert "Gemini License Provisioning Dashboard" in response.text
         assert "team@example.com" in response.text
@@ -80,10 +89,12 @@ def test_dashboard_route():
 
 def test_api_save_groups():
     """Verify saving monitored groups via API."""
-    with patch("app.modules.license_sync.router.update_config",
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.update_config",
                return_value={"monitored_groups": ["group1@domain.com"]}):
-        response = client.post(
-            "/modules/license-sync/api/groups",
+        response = _signed_in_client().post(
+            f"{_PREFIX}/modules/license-sync/api/groups",
             json={"groups": ["group1@domain.com"]}
         )
         assert response.status_code == 200
@@ -98,9 +109,11 @@ _LC = "projects/750/locations/us/licenseConfigs/gemini_ent"
 def test_api_save_settings_with_valid_subscription():
     gem = MagicMock()
     gem.list_license_configs.return_value = [{"name": _LC, "label": "Gemini Enterprise — us"}]
-    with patch("app.modules.license_sync.router.update_config", return_value={}), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.update_config", return_value={}), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        response = client.post("/modules/license-sync/api/settings", json={
+        response = _signed_in_client().post(f"{_PREFIX}/modules/license-sync/api/settings", json={
             "delegated_admin_email": "admin@test.com", "license_config": _LC,
         })
         assert response.status_code == 200
@@ -108,8 +121,9 @@ def test_api_save_settings_with_valid_subscription():
 
 
 def test_api_save_settings_rejects_workspace_sku():
-    with patch("app.modules.license_sync.router.update_config", return_value={}):
-        response = client.post("/modules/license-sync/api/settings", json={
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, patch("app.modules.license_sync.router.update_config", return_value={}):
+        response = _signed_in_client().post(f"{_PREFIX}/modules/license-sync/api/settings", json={
             "delegated_admin_email": "admin@test.com", "license_config": "Google-Apps",
         })
         assert response.status_code == 400
@@ -118,9 +132,11 @@ def test_api_save_settings_rejects_workspace_sku():
 def test_api_save_settings_rejects_unknown_subscription():
     gem = MagicMock()
     gem.list_license_configs.return_value = [{"name": _LC, "label": "x"}]
-    with patch("app.modules.license_sync.router.update_config", return_value={}), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.update_config", return_value={}), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        response = client.post("/modules/license-sync/api/settings", json={
+        response = _signed_in_client().post(f"{_PREFIX}/modules/license-sync/api/settings", json={
             "delegated_admin_email": "admin@test.com",
             "license_config": "projects/750/locations/us/licenseConfigs/other",
         })
@@ -136,9 +152,11 @@ def test_settings_view_renders_subscription_dropdown():
     gem.list_license_configs.return_value = [
         {"name": _LC, "label": "Gemini Enterprise — 50 seats — us — Free trial [ACTIVE]"},
     ]
-    with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        r = client.get("/modules/license-sync/settings")
+        r = _signed_in_client().get(f"{_PREFIX}/modules/license-sync/settings")
         assert r.status_code == 200
         assert "Gemini Enterprise License Subscription" in r.text
         assert "Free trial [ACTIVE]" in r.text
@@ -150,9 +168,11 @@ def test_settings_view_handles_license_api_error():
                    "delegated_admin_email": "a@e.com", "cron_expression": "0 2 * * *"}
     gem = MagicMock()
     gem.list_license_configs.side_effect = RuntimeError("permission denied")
-    with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.GeminiLicenseClient", return_value=gem):
-        r = client.get("/modules/license-sync/settings")
+        r = _signed_in_client().get(f"{_PREFIX}/modules/license-sync/settings")
         assert r.status_code == 200
         assert "Could not list license subscriptions" in r.text
 
@@ -169,10 +189,12 @@ def test_schedule_view_renders_notification_settings():
         "notify_on": "all",
     }
     sched_status = {"available": False, "job_name": "job", "schedule": None, "time_zone": "UTC"}
-    with patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.get_config", return_value=mock_config), \
          patch("app.modules.license_sync.router.SchedulerService") as MockSched:
         MockSched.return_value.get_schedule.return_value = sched_status
-        response = client.get("/modules/license-sync/schedule")
+        response = _signed_in_client().get(f"{_PREFIX}/modules/license-sync/schedule")
         assert response.status_code == 200
         assert "Run Notifications" in response.text
         assert "ops@example.com" in response.text
@@ -181,12 +203,14 @@ def test_schedule_view_renders_notification_settings():
 
 def test_api_save_notifications_valid():
     """Save notification recipients + mode via API."""
-    with patch("app.modules.license_sync.router.update_config", return_value={
-        "notification_emails": ["ops@example.com", "sre@example.com"],
-        "notify_on": "all",
-    }):
-        response = client.post(
-            "/modules/license-sync/api/notifications",
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, \
+         patch("app.modules.license_sync.router.update_config", return_value={
+             "notification_emails": ["ops@example.com", "sre@example.com"],
+             "notify_on": "all",
+         }):
+        response = _signed_in_client().post(
+            f"{_PREFIX}/modules/license-sync/api/notifications",
             json={"notification_emails": "ops@example.com, sre@example.com", "notify_on": "all"},
         )
         assert response.status_code == 200
@@ -197,19 +221,23 @@ def test_api_save_notifications_valid():
 
 
 def test_api_save_notifications_rejects_bad_email():
-    response = client.post(
-        "/modules/license-sync/api/notifications",
-        json={"notification_emails": ["not-an-email"], "notify_on": "failures"},
-    )
-    assert response.status_code == 400
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3:
+        response = _signed_in_client().post(
+            f"{_PREFIX}/modules/license-sync/api/notifications",
+            json={"notification_emails": ["not-an-email"], "notify_on": "failures"},
+        )
+        assert response.status_code == 400
 
 
 def test_api_save_notifications_rejects_bad_mode():
-    response = client.post(
-        "/modules/license-sync/api/notifications",
-        json={"notification_emails": [], "notify_on": "sometimes"},
-    )
-    assert response.status_code == 400
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3:
+        response = _signed_in_client().post(
+            f"{_PREFIX}/modules/license-sync/api/notifications",
+            json={"notification_emails": [], "notify_on": "sometimes"},
+        )
+        assert response.status_code == 400
 
 
 def test_api_test_connection():
@@ -219,13 +247,14 @@ def test_api_test_connection():
         "message": "Connected",
         "subject": "admin@test.com"
     }
-    with patch("app.modules.license_sync.router.WorkspaceClient") as MockClient:
+    m1, m2, m3 = _auth_mocks()
+    with m1, m2, m3, patch("app.modules.license_sync.router.WorkspaceClient") as MockClient:
         mock_instance = MagicMock()
         mock_instance.test_dwd_connection.return_value = mock_res
         MockClient.return_value = mock_instance
 
-        response = client.post(
-            "/modules/license-sync/api/test-connection",
+        response = _signed_in_client().post(
+            f"{_PREFIX}/modules/license-sync/api/test-connection",
             json={"delegated_admin_email": "admin@test.com"}
         )
         assert response.status_code == 200

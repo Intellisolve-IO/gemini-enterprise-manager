@@ -3,7 +3,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 6.20.0" # iap_enabled on google_cloud_run_v2_service
+      version = ">= 6.20.0"
     }
   }
 }
@@ -11,16 +11,6 @@ terraform {
 provider "google" {
   project = var.project_id
   region  = var.region
-}
-
-data "google_project" "current" {}
-
-locals {
-  # Workspace domain inferred from the delegated admin address; used for the
-  # default IAP allow-list. Override with var.iap_members.
-  workspace_domain = try(split("@", var.delegated_admin_email)[1], "example.com")
-  iap_members      = length(var.iap_members) > 0 ? var.iap_members : ["domain:${local.workspace_domain}"]
-  iap_sa_member    = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
 }
 
 # -----------------------------------------------------------------------------
@@ -163,16 +153,11 @@ resource "google_cloud_run_v2_service" "provisioner" {
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
 
-  # Identity-Aware Proxy. When true the app also requires the IAP-asserted user
-  # to be a Google Workspace super admin (needs IAP_AUDIENCE env var, below).
-  iap_enabled = var.enable_iap
-
-  lifecycle {
-    precondition {
-      condition     = !var.enable_iap || var.iap_audience != ""
-      error_message = "Set var.iap_audience when enable_iap = true, so the app can verify the IAP JWT and enforce the Workspace super-admin check."
-    }
-  }
+  # Public by design: this is a multi-tenant, self-serve SaaS surface. Every
+  # request is authorized in-app via a Firebase session cookie (see
+  # app/core/session_auth.py) plus per-tenant Firestore membership, not by a
+  # network-level gate - Identity-Aware Proxy's pre-authorized-principal model
+  # doesn't fit self-serve signup, so this app doesn't front itself with IAP.
 
   template {
     service_account = google_service_account.app_sa.email
@@ -202,34 +187,20 @@ resource "google_cloud_run_v2_service" "provisioner" {
         value = var.region
       }
       env {
-        name  = "DELEGATED_ADMIN_EMAIL"
-        value = var.delegated_admin_email
-      }
-      env {
         name  = "RUNTIME_SERVICE_ACCOUNT_EMAIL"
         value = google_service_account.app_sa.email
-      }
-      env {
-        name  = "IAP_AUDIENCE"
-        value = var.iap_audience
-      }
-      env {
-        name  = "SYNC_INVOKER_SA_EMAIL"
-        value = google_service_account.scheduler_sa.email
-      }
-      env {
-        name  = "NOTIFICATION_SENDER_EMAIL"
-        value = var.notification_sender_email
       }
       env {
         name  = "PUBLIC_BASE_URL"
         value = var.public_base_url
       }
-      # The Gemini Enterprise license subscription is chosen on the Settings page
-      # (stored in Firestore). Optional headless override:
       env {
-        name  = "LICENSE_CONFIG"
-        value = var.license_config
+        name  = "FIREBASE_API_KEY"
+        value = var.firebase_api_key
+      }
+      env {
+        name  = "FIREBASE_PROJECT_ID"
+        value = var.firebase_project_id
       }
       env {
         name  = "CLOUD_SCHEDULER_JOB_NAME"
@@ -257,12 +228,9 @@ resource "google_cloud_run_v2_service" "provisioner" {
   }
 }
 
-# Public invoker binding - ONLY when IAP is disabled. With enable_iap = true this
-# is dropped and the IAP service agent (below) is the sole run.invoker.
-# WARNING (enable_iap = false): the admin UI and every /api/* endpoint are then
-# public and unauthenticated. See "Security Model" in setup_instructions.md.
+# Public invoker binding - the web service is unconditionally public; every
+# request is authorized in-app (see the note on the service resource above).
 resource "google_cloud_run_v2_service_iam_member" "public_access" {
-  count    = var.enable_iap ? 0 : 1
   location = google_cloud_run_v2_service.provisioner.location
   name     = google_cloud_run_v2_service.provisioner.name
   role     = "roles/run.invoker"
@@ -270,38 +238,18 @@ resource "google_cloud_run_v2_service_iam_member" "public_access" {
 }
 
 # -----------------------------------------------------------------------------
-# 4b. Identity-Aware Proxy (only when enable_iap = true)
-# -----------------------------------------------------------------------------
-# The IAP service agent invokes Cloud Run on the authenticated user's behalf.
-resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
-  count    = var.enable_iap ? 1 : 0
-  location = google_cloud_run_v2_service.provisioner.location
-  name     = google_cloud_run_v2_service.provisioner.name
-  role     = "roles/run.invoker"
-  member   = local.iap_sa_member
-}
-
-# Who may pass through IAP. The app further restricts this to Workspace super
-# admins, so a domain-wide grant here is acceptable; tighten to a group if you
-# prefer. Set var.iap_members to override the default (domain:<workspace_domain>).
-resource "google_iap_web_cloud_run_service_iam_member" "accessors" {
-  for_each              = toset(var.enable_iap ? local.iap_members : [])
-  project               = var.project_id
-  location              = var.region
-  cloud_run_service_name = google_cloud_run_v2_service.provisioner.name
-  role                  = "roles/iap.httpsResourceAccessor"
-  member                = each.value
-}
-
-# -----------------------------------------------------------------------------
 # 5. Scheduled license sync: a Cloud Run Job triggered by Cloud Scheduler
 # -----------------------------------------------------------------------------
 # The scheduled run executes as a Cloud Run *Job* (the same image, command
 # `python -m app.job_runner`), triggered by Cloud Scheduler through the Cloud
-# Run Admin API. This path never hits the IAP-protected HTTP service, so
-# scheduled runs work whether or not IAP is enabled - no IAP OAuth client and
-# no `SYNC_INVOKER_SA_EMAIL` allow-list are needed. The web service keeps
-# `POST /api/sync/run` for the dashboard's manual "Run sync now" button.
+# Run Admin API - this path never touches the web service's own HTTP routes.
+#
+# KNOWN LIMITATION (multi-tenant conversion, Phase 1): this job still syncs
+# exactly ONE designated tenant/environment (scheduled_sync_tenant_id /
+# scheduled_sync_environment_id), not a fan-out across every tenant's
+# environments. Replacing this with a tick job that scans all due
+# environments is Phase 5 of the multi-tenant conversion - see
+# app/job_runner.py's module docstring.
 resource "google_cloud_run_v2_job" "sync_runner" {
   depends_on = [
     google_project_service.apis,
@@ -337,24 +285,20 @@ resource "google_cloud_run_v2_job" "sync_runner" {
           value = var.region
         }
         env {
-          name  = "DELEGATED_ADMIN_EMAIL"
-          value = var.delegated_admin_email
-        }
-        env {
           name  = "RUNTIME_SERVICE_ACCOUNT_EMAIL"
           value = google_service_account.app_sa.email
-        }
-        env {
-          name  = "NOTIFICATION_SENDER_EMAIL"
-          value = var.notification_sender_email
         }
         env {
           name  = "PUBLIC_BASE_URL"
           value = var.public_base_url
         }
         env {
-          name  = "LICENSE_CONFIG"
-          value = var.license_config
+          name  = "SCHEDULED_SYNC_TENANT_ID"
+          value = var.scheduled_sync_tenant_id
+        }
+        env {
+          name  = "SCHEDULED_SYNC_ENVIRONMENT_ID"
+          value = var.scheduled_sync_environment_id
         }
       }
     }

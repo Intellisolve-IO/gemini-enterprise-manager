@@ -8,6 +8,12 @@ logger = logging.getLogger("gemini_provisioner.firestore")
 
 _db_client: Optional[firestore.Client] = None
 
+TENANTS_COLLECTION = "tenants"
+ENVIRONMENTS_SUBCOLLECTION = "environments"
+CONFIG_SUBCOLLECTION = "config"
+LICENSE_SYNC_CONFIG_DOC_ID = "license_sync"
+HISTORY_SUBCOLLECTION = "sync_history"
+
 
 def get_firestore_client() -> firestore.Client:
     """Singleton helper to obtain Firestore client."""
@@ -25,33 +31,44 @@ def get_firestore_client() -> firestore.Client:
     return _db_client
 
 
-def get_config() -> Dict[str, Any]:
-    """Retrieve application configuration from Firestore, returning defaults if not yet created."""
+def _environment_ref(tenant_id: str, environment_id: str):
+    """The document reference for one tenant's one environment - everything
+    below (config, module_config, sync_history, health_check_runs) nests
+    under this."""
+    return (
+        get_firestore_client()
+        .collection(TENANTS_COLLECTION).document(tenant_id)
+        .collection(ENVIRONMENTS_SUBCOLLECTION).document(environment_id)
+    )
+
+
+def get_config(tenant_id: str, environment_id: str) -> Dict[str, Any]:
+    """Retrieve one environment's License Sync configuration from Firestore,
+    returning defaults if not yet created."""
     default_config: Dict[str, Any] = {
         "monitored_groups": [],
-        # Selected Gemini Enterprise license subscription (Discovery Engine
-        # license config resource name) + a human label for display.
-        "license_config": settings.LICENSE_CONFIG or "",
+        "license_config": "",
         "license_label": "",
-        "delegated_admin_email": settings.DELEGATED_ADMIN_EMAIL,
+        "delegated_admin_email": "",
         "cron_expression": "0 2 * * *",
-        # Run notifications
-        "notification_emails": [],          # list of recipient addresses
-        "notify_on": "failures",            # "failures" (only FAILED/PARTIAL_SUCCESS) or "all"
+        "notification_emails": [],
+        "notify_on": "failures",
         "public_base_url": settings.PUBLIC_BASE_URL or "",
         "last_updated": None,
     }
-    
+
     try:
-        db = get_firestore_client()
-        doc_ref = db.collection(settings.CONFIG_COLLECTION).document(settings.CONFIG_DOC_ID)
+        doc_ref = (
+            _environment_ref(tenant_id, environment_id)
+            .collection(CONFIG_SUBCOLLECTION).document(LICENSE_SYNC_CONFIG_DOC_ID)
+        )
         snapshot = doc_ref.get()
         if snapshot.exists:
             data = snapshot.to_dict() or {}
-            # Merge with defaults to ensure all keys exist
             return {**default_config, **data}
         else:
-            logger.info("No config document found in Firestore. Creating default...")
+            logger.info("No config document found for tenant=%s environment=%s. Creating default...",
+                        tenant_id, environment_id)
             doc_ref.set(default_config)
             return default_config
     except Exception as e:
@@ -59,42 +76,45 @@ def get_config() -> Dict[str, Any]:
         return default_config
 
 
-def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Update settings in Firestore and return full current configuration."""
-    db = get_firestore_client()
-    doc_ref = db.collection(settings.CONFIG_COLLECTION).document(settings.CONFIG_DOC_ID)
-    
-    current = get_config()
+def update_config(tenant_id: str, environment_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Update one environment's License Sync config in Firestore and return the
+    full current configuration."""
+    doc_ref = (
+        _environment_ref(tenant_id, environment_id)
+        .collection(CONFIG_SUBCOLLECTION).document(LICENSE_SYNC_CONFIG_DOC_ID)
+    )
+
+    current = get_config(tenant_id, environment_id)
     current.update(updates)
     current["last_updated"] = datetime.now(timezone.utc).isoformat()
-    
+
     doc_ref.set(current)
-    logger.info("Successfully updated Firestore config: %s", list(updates.keys()))
+    logger.info("Updated License Sync config for tenant=%s environment=%s: %s",
+                tenant_id, environment_id, list(updates.keys()))
     return current
 
 
-def record_sync_history(run_record: Dict[str, Any]) -> str:
-    """Record a sync run record in Firestore sync_history collection."""
-    db = get_firestore_client()
-    col_ref = db.collection(settings.HISTORY_COLLECTION)
-    
+def record_sync_history(tenant_id: str, environment_id: str, run_record: Dict[str, Any]) -> str:
+    """Record a sync run record under one environment's sync_history collection."""
+    col_ref = _environment_ref(tenant_id, environment_id).collection(HISTORY_SUBCOLLECTION)
+
     if "created_at" not in run_record:
         run_record["created_at"] = datetime.now(timezone.utc).isoformat()
-        
+
     doc_ref = col_ref.document()
     doc_ref.set(run_record)
-    logger.info("Saved sync history document ID %s (status: %s)", doc_ref.id, run_record.get("status"))
+    logger.info("Saved sync history document ID %s for tenant=%s environment=%s (status: %s)",
+                doc_ref.id, tenant_id, environment_id, run_record.get("status"))
     return doc_ref.id
 
 
-def get_sync_history(limit: int = 25) -> List[Dict[str, Any]]:
-    """Retrieve recent sync execution history sorted by start time descending."""
+def get_sync_history(tenant_id: str, environment_id: str, limit: int = 25) -> List[Dict[str, Any]]:
+    """Retrieve one environment's recent sync execution history, newest first."""
     try:
-        db = get_firestore_client()
-        col_ref = db.collection(settings.HISTORY_COLLECTION)
+        col_ref = _environment_ref(tenant_id, environment_id).collection(HISTORY_SUBCOLLECTION)
         query = col_ref.order_by("started_at", direction=firestore.Query.DESCENDING).limit(limit)
         docs = query.stream()
-        
+
         history = []
         for d in docs:
             record = d.to_dict()

@@ -31,7 +31,7 @@ def _run(config, members=None, already_licensed=None, batch_result=None):
          patch("app.sync_worker.send_sync_notification", return_value={"sent": False}), \
          patch("app.sync_worker.WorkspaceClient", return_value=ws), \
          patch("app.sync_worker.GeminiLicenseClient", return_value=gem):
-        return run_license_sync(triggered_by="test"), ws, gem
+        return run_license_sync("tenant1", "env1", triggered_by="test"), ws, gem
 
 
 def test_skips_users_who_already_have_a_license():

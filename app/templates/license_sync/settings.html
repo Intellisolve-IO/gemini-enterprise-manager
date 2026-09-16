@@ -136,7 +136,7 @@
 
         try {
             const adminEmail = document.getElementById('admin-email').value.trim();
-            const response = await fetch('/modules/license-sync/api/test-connection', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/test-connection', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ delegated_admin_email: adminEmail })
@@ -185,7 +185,7 @@
         };
 
         try {
-            const response = await fetch('/modules/license-sync/api/settings', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

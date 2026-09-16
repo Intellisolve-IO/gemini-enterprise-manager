@@ -95,7 +95,7 @@
         btn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin mr-2"></i> Running...`;
 
         try {
-            const response = await fetch('/modules/health-check/api/run', { method: 'POST' });
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/health-check/api/run', { method: 'POST' });
             const data = await response.json();
             if (response.ok) {
                 showToast('Health check re-run complete.', 'success');

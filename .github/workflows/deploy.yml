@@ -1,4 +1,4 @@
-name: Deploy Gemini License Provisioner to Cloud Run
+name: Deploy Gemini Enterprise Admin Console to Cloud Run
 
 on:
   push:
@@ -21,17 +21,14 @@ permissions:
 #   ARTIFACT_REPO      (optional) default gemini-provisioner-docker
 #   CLOUD_SCHEDULER_JOB(optional) default gemini-license-sync-job (the cron trigger)
 #   CLOUD_RUN_JOB      (optional) default gemini-license-sync-runner (job the schedule runs)
-#   DELEGATED_ADMIN_EMAIL (optional) delegated admin to impersonate; if unset,
-#                         configure it on the app's Settings page after deploy
-#   IAP_AUDIENCE          (optional) enables the in-app Workspace super-admin check
-#                         (set once IAP is turned on; see setup_instructions.md)
-#   SYNC_INVOKER_SA_EMAIL (optional) scheduler SA allowed through /api/sync/run when IAP is on
-#   AUTH_BOOTSTRAP_ADMINS (optional) comma-separated break-glass admin emails
-#   SUPER_ADMIN_CACHE_TTL (optional) seconds to cache the super-admin lookup (default 300)
-#   NOTIFICATION_SENDER_EMAIL (optional) mailbox for run-notification emails
+#   FIREBASE_API_KEY      (required for sign-in to work) Firebase Web API key, not secret
+#   FIREBASE_PROJECT_ID   (required for sign-in to work) usually same as GCP_PROJECT_ID
 #   PUBLIC_BASE_URL       (optional) https base URL for links in notification emails
-#   CLOUD_RUN_ALLOW_UNAUTH(optional) default 'true'; set 'false' after enabling IAP
-#   CLOUD_RUN_ENABLE_IAP  (optional) 'true' enables IAP, 'false' disables, unset = leave as-is
+#   SCHEDULED_SYNC_TENANT_ID      (optional) the one tenant the scheduled job syncs -
+#                                 see app/job_runner.py's module docstring; a known,
+#                                 tracked limitation of Phase 1 of the multi-tenant
+#                                 conversion, replaced by a proper fan-out in Phase 5
+#   SCHEDULED_SYNC_ENVIRONMENT_ID (optional) the environment within that tenant
 # ─────────────────────────────────────────────────────────────────────────────────
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -94,37 +91,21 @@ jobs:
       - name: Deploy to Cloud Run
         env:
           IMAGE_TAG: ${{ github.sha }}
-          DELEGATED_ADMIN_EMAIL: ${{ vars.DELEGATED_ADMIN_EMAIL }}
-          IAP_AUDIENCE: ${{ vars.IAP_AUDIENCE }}
-          SYNC_INVOKER_SA_EMAIL: ${{ vars.SYNC_INVOKER_SA_EMAIL }}
-          AUTH_BOOTSTRAP_ADMINS: ${{ vars.AUTH_BOOTSTRAP_ADMINS }}
-          SUPER_ADMIN_CACHE_TTL: ${{ vars.SUPER_ADMIN_CACHE_TTL }}
-          NOTIFICATION_SENDER_EMAIL: ${{ vars.NOTIFICATION_SENDER_EMAIL }}
+          FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
-          # Set repo variable CLOUD_RUN_ALLOW_UNAUTH=false once IAP is enabled,
-          # so CI stops re-opening the service on every deploy.
-          ALLOW_UNAUTH: ${{ vars.CLOUD_RUN_ALLOW_UNAUTH || 'true' }}
-          # CLOUD_RUN_ENABLE_IAP: 'true' turns IAP on, 'false' turns it off,
-          # unset leaves the current IAP state untouched.
-          ENABLE_IAP: ${{ vars.CLOUD_RUN_ENABLE_IAP }}
         run: |
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
           ENV_VARS="GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},CLOUD_SCHEDULER_JOB_NAME=${{ env.SCHEDULER_JOB }},RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}"
-          [ -n "${DELEGATED_ADMIN_EMAIL}" ]     && ENV_VARS="${ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
-          [ -n "${IAP_AUDIENCE}" ]              && ENV_VARS="${ENV_VARS},IAP_AUDIENCE=${IAP_AUDIENCE}"
-          [ -n "${SYNC_INVOKER_SA_EMAIL}" ]     && ENV_VARS="${ENV_VARS},SYNC_INVOKER_SA_EMAIL=${SYNC_INVOKER_SA_EMAIL}"
-          [ -n "${AUTH_BOOTSTRAP_ADMINS}" ]     && ENV_VARS="${ENV_VARS},AUTH_BOOTSTRAP_ADMINS=${AUTH_BOOTSTRAP_ADMINS}"
-          [ -n "${SUPER_ADMIN_CACHE_TTL}" ]     && ENV_VARS="${ENV_VARS},SUPER_ADMIN_CACHE_TTL=${SUPER_ADMIN_CACHE_TTL}"
-          [ -n "${NOTIFICATION_SENDER_EMAIL}" ] && ENV_VARS="${ENV_VARS},NOTIFICATION_SENDER_EMAIL=${NOTIFICATION_SENDER_EMAIL}"
-          [ -n "${PUBLIC_BASE_URL}" ]           && ENV_VARS="${ENV_VARS},PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
+          [ -n "${FIREBASE_API_KEY}" ]    && ENV_VARS="${ENV_VARS},FIREBASE_API_KEY=${FIREBASE_API_KEY}"
+          [ -n "${FIREBASE_PROJECT_ID}" ] && ENV_VARS="${ENV_VARS},FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}"
+          [ -n "${PUBLIC_BASE_URL}" ]     && ENV_VARS="${ENV_VARS},PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
 
-          if [ "${ALLOW_UNAUTH}" = "false" ]; then AUTH_FLAG="--no-allow-unauthenticated"; else AUTH_FLAG="--allow-unauthenticated"; fi
-
-          IAP_FLAG=""
-          if [ "${ENABLE_IAP}" = "true" ]; then IAP_FLAG="--iap"; elif [ "${ENABLE_IAP}" = "false" ]; then IAP_FLAG="--no-iap"; fi
-
-          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}' (${AUTH_FLAG} ${IAP_FLAG})..."
+          echo "Deploying ${IMAGE_URI} to Cloud Run service '${{ env.SERVICE_NAME }}'..."
+          # Public by design: every request is authorized in-app via a Firebase
+          # session cookie + Firestore tenant membership, not a network-level
+          # gate - see the note on google_cloud_run_v2_service in terraform/main.tf.
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image "${IMAGE_URI}" \
             --region ${{ env.REGION }} \
@@ -133,26 +114,25 @@ jobs:
             --memory 1024Mi \
             --cpu 1 \
             --set-env-vars "${ENV_VARS}" \
-            ${AUTH_FLAG} ${IAP_FLAG} \
+            --allow-unauthenticated \
             --quiet
 
       - name: Deploy the scheduled-sync Cloud Run Job
         env:
           IMAGE_TAG: ${{ github.sha }}
-          DELEGATED_ADMIN_EMAIL: ${{ vars.DELEGATED_ADMIN_EMAIL }}
-          NOTIFICATION_SENDER_EMAIL: ${{ vars.NOTIFICATION_SENDER_EMAIL }}
           PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
-          LICENSE_CONFIG: ${{ vars.LICENSE_CONFIG }}
+          SCHEDULED_SYNC_TENANT_ID: ${{ vars.SCHEDULED_SYNC_TENANT_ID }}
+          SCHEDULED_SYNC_ENVIRONMENT_ID: ${{ vars.SCHEDULED_SYNC_ENVIRONMENT_ID }}
         run: |
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
-          # The job runs the sync worker directly (no HTTP, no IAP). It only needs
-          # the worker's env - not the IAP / auth settings the web service uses.
+          # The job runs the sync worker directly (no HTTP). Phase 1 limitation:
+          # it syncs exactly one designated tenant/environment - see
+          # app/job_runner.py's module docstring.
           JOB_ENV_VARS="GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},RUNTIME_SERVICE_ACCOUNT_EMAIL=${{ secrets.WIF_SERVICE_ACCOUNT }}"
-          [ -n "${DELEGATED_ADMIN_EMAIL}" ]     && JOB_ENV_VARS="${JOB_ENV_VARS},DELEGATED_ADMIN_EMAIL=${DELEGATED_ADMIN_EMAIL}"
-          [ -n "${NOTIFICATION_SENDER_EMAIL}" ] && JOB_ENV_VARS="${JOB_ENV_VARS},NOTIFICATION_SENDER_EMAIL=${NOTIFICATION_SENDER_EMAIL}"
-          [ -n "${PUBLIC_BASE_URL}" ]           && JOB_ENV_VARS="${JOB_ENV_VARS},PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
-          [ -n "${LICENSE_CONFIG}" ]            && JOB_ENV_VARS="${JOB_ENV_VARS},LICENSE_CONFIG=${LICENSE_CONFIG}"
+          [ -n "${PUBLIC_BASE_URL}" ]                   && JOB_ENV_VARS="${JOB_ENV_VARS},PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
+          [ -n "${SCHEDULED_SYNC_TENANT_ID}" ]          && JOB_ENV_VARS="${JOB_ENV_VARS},SCHEDULED_SYNC_TENANT_ID=${SCHEDULED_SYNC_TENANT_ID}"
+          [ -n "${SCHEDULED_SYNC_ENVIRONMENT_ID}" ]     && JOB_ENV_VARS="${JOB_ENV_VARS},SCHEDULED_SYNC_ENVIRONMENT_ID=${SCHEDULED_SYNC_ENVIRONMENT_ID}"
 
           echo "Deploying ${IMAGE_URI} to Cloud Run job '${{ env.SYNC_JOB }}'..."
           # Use `--flag=value` form: the args value starts with "-m", which gcloud
@@ -172,8 +152,7 @@ jobs:
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "=========================================================="
-          echo "Gemini License Provisioner Deployed Successfully!"
-          echo "Admin Dashboard URL: ${SERVICE_URL}"
-          echo "Manual sync endpoint: ${SERVICE_URL}/api/sync/run  (dashboard button)"
-          echo "Scheduled sync:       Cloud Run job '${{ env.SYNC_JOB }}' (Cloud Scheduler '${{ env.SCHEDULER_JOB }}')"
+          echo "Gemini Enterprise Admin Console Deployed Successfully!"
+          echo "Admin Console URL: ${SERVICE_URL}"
+          echo "Scheduled sync:    Cloud Run job '${{ env.SYNC_JOB }}' (Cloud Scheduler '${{ env.SCHEDULER_JOB }}')"
           echo "=========================================================="

@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -16,12 +16,15 @@ router = APIRouter()
 _MODULE_ID = "health-check"
 _DEFAULTS = {"enabled": False, "last_report": None, "last_run_at": None}
 
+_page = require_module_enabled_page(_MODULE_ID)
+_api = require_module_enabled_api(_MODULE_ID)
 
-def _run_and_cache() -> dict:
-    report = run_all_checks()
+
+def _run_and_cache(tenant_id: str, environment_id: str) -> dict:
+    report = run_all_checks(tenant_id, environment_id)
     try:
         update_module_config(
-            _MODULE_ID,
+            tenant_id, environment_id, _MODULE_ID,
             {"last_report": report, "last_run_at": report["ran_at"]},
             _DEFAULTS,
         )
@@ -31,22 +34,18 @@ def _run_and_cache() -> dict:
 
 
 @router.get("/modules/health-check", response_class=HTMLResponse)
-async def health_check_view(
-    request: Request,
-    principal: Optional[str] = Depends(require_module_enabled_page(_MODULE_ID)),
-):
-    report = _run_and_cache()
+async def health_check_view(request: Request, tenant_id: str, environment_id: str,
+                             _: Dict[str, Any] = Depends(_page)):
+    report = _run_and_cache(tenant_id, environment_id)
     return render(request, "health_check/report.html", {
         "active_page": _MODULE_ID,
         "report": report,
-        "principal": principal,
     })
 
 
 @router.post("/modules/health-check/api/run")
-async def health_check_run(
-    _: Optional[str] = Depends(require_module_enabled_api(_MODULE_ID)),
-):
+async def health_check_run(tenant_id: str, environment_id: str,
+                            _: Dict[str, Any] = Depends(_api)):
     """Re-run all checks and return the fresh report as JSON (used by the page's
     "Re-run" button so it doesn't need a full reload)."""
-    return _run_and_cache()
+    return _run_and_cache(tenant_id, environment_id)

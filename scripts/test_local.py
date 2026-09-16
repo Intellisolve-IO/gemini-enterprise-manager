@@ -63,7 +63,7 @@ def _run(config, members_map, already_licensed, batch=None):
          patch("app.sync_worker.send_sync_notification", return_value={"sent": False}), \
          patch("app.sync_worker.WorkspaceClient", return_value=ws), \
          patch("app.sync_worker.GeminiLicenseClient", return_value=gem):
-        return run_license_sync(triggered_by="local_test"), gem
+        return run_license_sync("tenant1", "env1", triggered_by="local_test"), gem
 
 
 def run_tests():

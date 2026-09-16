@@ -55,9 +55,12 @@
 
                 <div class="flex items-center space-x-4">
                     {% if principal %}
-                    <span class="hidden sm:inline-flex items-center text-xs text-slate-500" title="Signed in via Identity-Aware Proxy (Workspace super admin)">
-                        <i class="fa-solid fa-user-shield mr-1.5 text-slate-400"></i>{{ principal }}
+                    <span class="hidden sm:inline-flex items-center text-xs text-slate-500" title="Signed in with Google">
+                        <i class="fa-solid fa-user mr-1.5 text-slate-400"></i>{{ principal }}
                     </span>
+                    <button onclick="signOut()" class="text-xs text-slate-400 hover:text-slate-700 transition" title="Sign out">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
                     {% endif %}
                     <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
                         <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> {{ gcp_project_id }}
@@ -109,6 +112,14 @@
             }, 6000);
         }
 
+        async function signOut() {
+            try {
+                await fetch('/auth/logout', { method: 'POST' });
+            } finally {
+                window.location.href = '/';
+            }
+        }
+
         async function triggerManualSync() {
             // Not every page has its own "nav-sync-btn" element (only the License
             // Sync module's pages do) - guard so this still works when there's
@@ -122,7 +133,7 @@
             showToast('Triggering Gemini license synchronization in background...', 'info');
 
             try {
-                const response = await fetch('/modules/license-sync/api/sync/run', {
+                const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/sync/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ triggered_by: 'admin_ui' })

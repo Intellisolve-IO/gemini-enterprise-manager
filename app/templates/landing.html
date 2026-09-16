@@ -59,7 +59,7 @@
         const enabled = checkbox.checked;
 
         try {
-            const response = await fetch(`/api/modules/${moduleId}/toggle`, {
+            const response = await fetch(`/t/{{ tenant_id }}/e/{{ environment_id }}/api/modules/${moduleId}/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled: enabled })

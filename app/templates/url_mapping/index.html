@@ -108,7 +108,7 @@
         showToast('Provisioning load balancer resources - this can take a minute...', 'info');
 
         try {
-            const response = await fetch('/modules/url-mapping/api/mappings', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/url-mapping/api/mappings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ custom_domain: domain, target_deep_link: target })
@@ -130,7 +130,7 @@
 
     async function refreshMapping(id) {
         try {
-            const response = await fetch(`/modules/url-mapping/api/mappings/${id}/refresh`, { method: 'POST' });
+            const response = await fetch(`/t/{{ tenant_id }}/e/{{ environment_id }}/modules/url-mapping/api/mappings/${id}/refresh`, { method: 'POST' });
             const data = await response.json();
             if (response.ok) {
                 showToast('Status refreshed.', 'success');
@@ -149,7 +149,7 @@
             return;
         }
         try {
-            const response = await fetch(`/modules/url-mapping/api/mappings/${id}/delete`, { method: 'POST' });
+            const response = await fetch(`/t/{{ tenant_id }}/e/{{ environment_id }}/modules/url-mapping/api/mappings/${id}/delete`, { method: 'POST' });
             const data = await response.json();
             if (response.ok) {
                 showToast('Mapping deleted.', 'success');

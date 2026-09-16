@@ -1,13 +1,17 @@
 """License Sync module: syncs Gemini Enterprise licenses from Google Group
 membership. This is "module 1" of the admin console.
 
-All routes live under /modules/license-sync/* (normalized from their original
-bare top-level paths - /groups, /schedule, etc. - as a prerequisite for the
-multi-tenant /t/{tenant_id}/e/{environment_id}/* routing prefix that every
-module route will gain next; a shared prefix can't coexist with routes that
-don't otherwise namespace themselves by module). POST .../api/sync/run is
-unaffected by Cloud Scheduler either way, since the scheduled path calls the
-Cloud Run *job* directly via the Cloud Run Admin API, never this HTTP route.
+Mounted in app/main.py under the shared /t/{tenant_id}/e/{environment_id}
+prefix, so every route here is environment-scoped; `tenant_id`/`environment_id`
+arrive as ordinary FastAPI path parameters (bound from that prefix) on every
+route function.
+
+Credential impersonation (acting as the environment's own tenant-owned service
+account rather than the central app's ambient identity) is not yet wired up -
+WorkspaceClient/GeminiLicenseClient/SchedulerService below still use
+self-impersonation, same as before the multi-tenant conversion. That's Phase 2
+of the multi-tenant conversion; see app/sync_worker.py's docstring for the
+same note.
 """
 import logging
 import re
@@ -17,20 +21,23 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from app.config import settings
 from app.firestore_db import get_config, update_config, get_sync_history
 from app.workspace_client import WorkspaceClient
 from app.gemini_licensing import GeminiLicenseClient, is_valid_config_name as gem_is_valid_config_name
 from app.sync_worker import run_license_sync
 from app.scheduler_service import SchedulerService
-from app.auth import require_super_admin, require_sync_caller
+from app.core.module_auth import require_module_enabled_api, require_module_enabled_page
 from app.core.rendering import render
 
 logger = logging.getLogger("gemini_provisioner.license_sync")
 
 router = APIRouter()
 
+_MODULE_ID = "license-sync"
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+_page = require_module_enabled_page(_MODULE_ID)
+_api = require_module_enabled_api(_MODULE_ID)
 
 
 # -------------------------------------------------------------------------
@@ -67,10 +74,11 @@ class DwdTestPayload(BaseModel):
 # HTML Views
 # -------------------------------------------------------------------------
 @router.get("/modules/license-sync", response_class=HTMLResponse)
-async def dashboard_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
+async def dashboard_view(request: Request, tenant_id: str, environment_id: str,
+                          _: Dict[str, Any] = Depends(_page)):
     """License Sync module dashboard."""
-    config = get_config()
-    history = get_sync_history(limit=1)
+    config = get_config(tenant_id, environment_id)
+    history = get_sync_history(tenant_id, environment_id, limit=1)
     last_run = history[0] if history else None
 
     return render(request, "license_sync/dashboard.html", {
@@ -78,16 +86,16 @@ async def dashboard_view(request: Request, principal: Optional[str] = Depends(re
         "license_sync_page": "dashboard",
         "config": config,
         "last_run": last_run,
-        "principal": principal,
     })
 
 
 @router.get("/modules/license-sync/groups", response_class=HTMLResponse)
-async def groups_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
+async def groups_view(request: Request, tenant_id: str, environment_id: str,
+                       _: Dict[str, Any] = Depends(_page)):
     """Google Groups selection view."""
-    config = get_config()
+    config = get_config(tenant_id, environment_id)
     monitored = config.get("monitored_groups", [])
-    delegated_email = config.get("delegated_admin_email", settings.DELEGATED_ADMIN_EMAIL)
+    delegated_email = config.get("delegated_admin_email", "")
 
     domain_groups = []
     error_msg = None
@@ -104,14 +112,14 @@ async def groups_view(request: Request, principal: Optional[str] = Depends(requi
         "monitored_groups": monitored,
         "domain_groups": domain_groups,
         "error": error_msg,
-        "principal": principal,
     })
 
 
 @router.get("/modules/license-sync/schedule", response_class=HTMLResponse)
-async def schedule_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
+async def schedule_view(request: Request, tenant_id: str, environment_id: str,
+                         _: Dict[str, Any] = Depends(_page)):
     """Sync schedule configuration view."""
-    config = get_config()
+    config = get_config(tenant_id, environment_id)
     scheduler_service = SchedulerService()
     scheduler_status = scheduler_service.get_schedule()
 
@@ -120,14 +128,14 @@ async def schedule_view(request: Request, principal: Optional[str] = Depends(req
         "license_sync_page": "schedule",
         "config": config,
         "scheduler_status": scheduler_status,
-        "principal": principal,
     })
 
 
 @router.get("/modules/license-sync/settings", response_class=HTMLResponse)
-async def settings_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
+async def settings_view(request: Request, tenant_id: str, environment_id: str,
+                         _: Dict[str, Any] = Depends(_page)):
     """System settings, DWD connectivity test, and Gemini license subscription picker."""
-    config = get_config()
+    config = get_config(tenant_id, environment_id)
     license_configs: List[Dict[str, Any]] = []
     license_error: Optional[str] = None
     try:
@@ -146,21 +154,20 @@ async def settings_view(request: Request, principal: Optional[str] = Depends(req
         "active_page": "license-sync",
         "license_sync_page": "settings",
         "config": config,
-        "principal": principal,
         "license_configs": license_configs,
         "license_error": license_error,
     })
 
 
 @router.get("/modules/license-sync/history", response_class=HTMLResponse)
-async def history_view(request: Request, principal: Optional[str] = Depends(require_super_admin)):
+async def history_view(request: Request, tenant_id: str, environment_id: str,
+                        _: Dict[str, Any] = Depends(_page)):
     """Execution audit history view."""
-    history = get_sync_history(limit=50)
+    history = get_sync_history(tenant_id, environment_id, limit=50)
     return render(request, "license_sync/history.html", {
         "active_page": "license-sync",
         "license_sync_page": "history",
         "history": history,
-        "principal": principal,
     })
 
 
@@ -168,10 +175,11 @@ async def history_view(request: Request, principal: Optional[str] = Depends(requ
 # API Endpoints
 # -------------------------------------------------------------------------
 @router.post("/modules/license-sync/api/groups")
-async def save_monitored_groups(payload: GroupsPayload, _: Optional[str] = Depends(require_super_admin)):
+async def save_monitored_groups(payload: GroupsPayload, tenant_id: str, environment_id: str,
+                                 _: Dict[str, Any] = Depends(_api)):
     """Save selected Google Groups to monitor in Firestore."""
     try:
-        updated = update_config({"monitored_groups": payload.groups})
+        updated = update_config(tenant_id, environment_id, {"monitored_groups": payload.groups})
         return {
             "success": True,
             "message": f"Successfully updated monitored groups ({len(payload.groups)} selected).",
@@ -183,7 +191,8 @@ async def save_monitored_groups(payload: GroupsPayload, _: Optional[str] = Depen
 
 
 @router.post("/modules/license-sync/api/schedule")
-async def update_sync_schedule(payload: SchedulePayload, _: Optional[str] = Depends(require_super_admin)):
+async def update_sync_schedule(payload: SchedulePayload, tenant_id: str, environment_id: str,
+                                _: Dict[str, Any] = Depends(_api)):
     """Update cron schedule in Firestore and programmatically in Cloud Scheduler."""
     cron = payload.cron_expression.strip()
     if not cron:
@@ -191,11 +200,15 @@ async def update_sync_schedule(payload: SchedulePayload, _: Optional[str] = Depe
 
     # 1. Update Firestore config
     try:
-        update_config({"cron_expression": cron})
+        update_config(tenant_id, environment_id, {"cron_expression": cron})
     except Exception as e:
         logger.error("Failed to save schedule to Firestore: %s", e)
 
     # 2. Update Cloud Scheduler job
+    #    NOTE: this still points at the single shared Cloud Scheduler job used
+    #    before the multi-tenant conversion (see SchedulerService) - the
+    #    per-environment scheduling fan-out is Phase 5, not yet built. Every
+    #    environment's "Sync Schedule" page currently edits the same job.
     scheduler_svc = SchedulerService()
     sched_result = scheduler_svc.update_schedule(cron)
 
@@ -208,7 +221,8 @@ async def update_sync_schedule(payload: SchedulePayload, _: Optional[str] = Depe
 
 
 @router.post("/modules/license-sync/api/notifications")
-async def update_notifications(payload: NotificationsPayload, _: Optional[str] = Depends(require_super_admin)):
+async def update_notifications(payload: NotificationsPayload, tenant_id: str, environment_id: str,
+                                _: Dict[str, Any] = Depends(_api)):
     """Save sync-run email notification settings to Firestore."""
     raw = payload.notification_emails
     if isinstance(raw, str):
@@ -224,7 +238,7 @@ async def update_notifications(payload: NotificationsPayload, _: Optional[str] =
         raise HTTPException(status_code=400, detail="notify_on must be 'failures' or 'all'.")
 
     try:
-        updated = update_config({
+        updated = update_config(tenant_id, environment_id, {
             "notification_emails": emails,
             "notify_on": notify_on,
         })
@@ -246,7 +260,8 @@ async def update_notifications(payload: NotificationsPayload, _: Optional[str] =
 
 
 @router.post("/modules/license-sync/api/settings")
-async def save_settings(payload: SettingsPayload, _: Optional[str] = Depends(require_super_admin)):
+async def save_settings(payload: SettingsPayload, tenant_id: str, environment_id: str,
+                         _: Dict[str, Any] = Depends(_api)):
     """Update the delegated admin and the selected Gemini Enterprise license subscription."""
     updates: Dict[str, Any] = {"delegated_admin_email": payload.delegated_admin_email.strip()}
 
@@ -272,7 +287,7 @@ async def save_settings(payload: SettingsPayload, _: Optional[str] = Depends(req
         updates["license_label"] = ""
 
     try:
-        updated = update_config(updates)
+        updated = update_config(tenant_id, environment_id, updates)
     except Exception as e:
         logger.error("Failed to save settings: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -281,7 +296,8 @@ async def save_settings(payload: SettingsPayload, _: Optional[str] = Depends(req
 
 
 @router.post("/modules/license-sync/api/test-connection")
-async def test_dwd_connection(payload: DwdTestPayload, _: Optional[str] = Depends(require_super_admin)):
+async def test_dwd_connection(payload: DwdTestPayload, tenant_id: str, environment_id: str,
+                               _: Dict[str, Any] = Depends(_api)):
     """Perform live connectivity check against Admin SDK Directory API using DWD."""
     client = WorkspaceClient(delegated_admin_email=payload.delegated_admin_email)
     result = client.test_dwd_connection(payload.delegated_admin_email)
@@ -289,39 +305,18 @@ async def test_dwd_connection(payload: DwdTestPayload, _: Optional[str] = Depend
 
 
 @router.post("/modules/license-sync/api/sync/run")
-async def trigger_sync(
-    request: Request,
-    payload: Optional[SyncTriggerPayload] = None,
-    caller: Optional[str] = Depends(require_sync_caller),
-):
-    """Scheduled & manual sync worker trigger endpoint.
-
-    Invoked by:
-    - Cloud Scheduler via HTTP POST with OIDC authentication
-    - Admin UI manually via JSON POST
-
-    When IAP is enforced, the caller must be a Workspace super admin or the
-    configured scheduler service account (SYNC_INVOKER_SA_EMAIL).
-    """
-    # Identify trigger source
-    auth_header = request.headers.get("Authorization", "")
-    user_agent = request.headers.get("User-Agent", "")
-    invoker_sa = (settings.SYNC_INVOKER_SA_EMAIL or "").strip().lower()
-
-    triggered_by = "admin_ui"
-    if caller and invoker_sa and caller == invoker_sa:
-        triggered_by = "scheduled"
-    elif caller:
-        triggered_by = "admin_ui"
-    elif "Google-Cloud-Scheduler" in user_agent or "Bearer" in auth_header:
-        triggered_by = "scheduled"
-    elif payload and payload.triggered_by:
-        triggered_by = payload.triggered_by
-
-    logger.info("Executing license sync endpoint (trigger source: %s)", triggered_by)
+async def trigger_sync(request: Request, tenant_id: str, environment_id: str,
+                        payload: Optional[SyncTriggerPayload] = None,
+                        _: Dict[str, Any] = Depends(_api)):
+    """Manual sync worker trigger endpoint (the dashboard's "Run Sync Now"
+    button). Scheduled runs do not go through this HTTP route - Cloud
+    Scheduler calls the Cloud Run job directly via the Cloud Run Admin API."""
+    triggered_by = (payload.triggered_by if payload and payload.triggered_by else "admin_ui")
+    logger.info("Executing license sync for tenant=%s environment=%s (trigger source: %s)",
+                tenant_id, environment_id, triggered_by)
 
     try:
-        result = run_license_sync(triggered_by=triggered_by)
+        result = run_license_sync(tenant_id, environment_id, triggered_by=triggered_by)
         return JSONResponse(content=result, status_code=status.HTTP_200_OK)
     except Exception as e:
         logger.critical("Sync engine crashed: %s", e, exc_info=True)

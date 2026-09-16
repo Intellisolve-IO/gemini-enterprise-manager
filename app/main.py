@@ -1,14 +1,12 @@
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.firestore_db import get_config, update_config
-from app import auth
+from app.auth_routes import router as auth_router
 from app.core.module_auth import ModuleDisabledError
 from app.core.templating import templates
 from app.landing import router as landing_router
@@ -23,9 +21,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gemini_provisioner.main")
 
-# When access control is enforced, hide the interactive API docs / schema behind
-# IAP is still not enough - drop them entirely so only real endpoints are exposed.
-_docs_kwargs = {} if not settings.AUTH_ENABLED else {
+# Hide the interactive API docs / schema in anything but local debug - this is
+# now a public multi-tenant SaaS surface, not a single-tenant IAP-fronted
+# deployment, so the docs stay hidden by default.
+_docs_kwargs = {} if settings.DEBUG else {
     "docs_url": None, "redoc_url": None, "openapi_url": None,
 }
 
@@ -33,7 +32,7 @@ app = FastAPI(
     title="Gemini Enterprise Admin Console",
     description="Modular admin tooling for Gemini Enterprise: license sync, health "
                 "checks, app URL mapping, agent deployment, and more.",
-    version="2.0.0",
+    version="3.0.0",
     **_docs_kwargs,
 )
 
@@ -45,54 +44,34 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Expose deployment identifiers to every template (shown in the header/footer).
 templates.env.globals["gcp_project_id"] = settings.GCP_PROJECT_ID or "unset"
 templates.env.globals["gcp_region"] = settings.GCP_REGION
-
-# Last public base URL persisted to Firestore config (per process cache, so we
-# only write when it actually changes).
-_seen_base_url: Optional[str] = None
-
-
-@app.middleware("http")
-async def capture_base_url(request: Request, call_next):
-    """Learn this service's public base URL from real traffic so scheduler-triggered
-    runs (which have no request) can build absolute links in notification emails.
-
-    Only ``*.run.app`` hosts are auto-trusted (the client-controlled Host header
-    could otherwise poison the link). For a custom domain, set ``PUBLIC_BASE_URL``.
-    """
-    global _seen_base_url
-    # Log the IAP JWT audience even before enforcement is turned on, so the exact
-    # value for IAP_AUDIENCE is discoverable from the logs. No-op without the header.
-    _assertion = request.headers.get(settings.IAP_JWT_HEADER)
-    if _assertion:
-        auth._log_observed_audience(_assertion)
-    try:
-        if not settings.PUBLIC_BASE_URL and request.method == "GET" and \
-                not request.url.path.startswith(("/static", "/healthz", "/api")):
-            base = str(request.base_url).rstrip("/")
-            host = request.url.hostname or ""
-            trusted = host.endswith(".run.app") or host in ("localhost", "127.0.0.1")
-            if base and trusted and base != _seen_base_url:
-                _seen_base_url = base
-                if get_config().get("public_base_url") != base:
-                    update_config({"public_base_url": base})
-    except Exception as e:  # never break a request over this
-        logger.debug("base URL capture skipped: %s", e)
-    return await call_next(request)
+templates.env.globals["firebase_api_key"] = settings.FIREBASE_API_KEY or ""
+templates.env.globals["firebase_auth_domain"] = settings.FIREBASE_AUTH_DOMAIN
+templates.env.globals["firebase_project_id"] = settings.FIREBASE_PROJECT_ID or ""
 
 
 @app.exception_handler(ModuleDisabledError)
 async def module_disabled_handler(request: Request, exc: ModuleDisabledError):
-    """A disabled module's page route redirects to the landing page with a toast."""
-    return RedirectResponse(url=f"/?disabled_module={exc.module_id}", status_code=303)
+    """A disabled module's page route redirects to the environment's landing
+    page with an explanatory toast."""
+    url = f"/t/{exc.tenant_id}/e/{exc.environment_id}/?disabled_module={exc.module_id}"
+    return RedirectResponse(url=url, status_code=303)
 
 
 # -------------------------------------------------------------------------
-# Module routers
+# Routers
 # -------------------------------------------------------------------------
+# auth_router and landing_router define their own paths (no shared prefix -
+# landing_router itself spans "/", "/t/{tenant_id}/", and
+# "/t/{tenant_id}/e/{environment_id}/"). Every feature module's routes are
+# environment-scoped, so they share one prefix mounted here rather than each
+# repeating "/t/{tenant_id}/e/{environment_id}" in their own decorators.
+_ENVIRONMENT_PREFIX = "/t/{tenant_id}/e/{environment_id}"
+
+app.include_router(auth_router)
 app.include_router(landing_router)
-app.include_router(license_sync_router)
-app.include_router(health_check_router)
-app.include_router(url_mapping_router)
+app.include_router(license_sync_router, prefix=_ENVIRONMENT_PREFIX)
+app.include_router(health_check_router, prefix=_ENVIRONMENT_PREFIX)
+app.include_router(url_mapping_router, prefix=_ENVIRONMENT_PREFIX)
 
 
 @app.get("/healthz")
