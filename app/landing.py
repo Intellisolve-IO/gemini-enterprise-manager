@@ -7,12 +7,14 @@ onboarding wizard (service-account setup, connection verification, topology
 choices, default-config deployment) is a separate, later piece of work.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
+from app.config import settings
 from app.core import tenant_credentials
 from app.core import tenants as tenants_db
 from app.core.module_config import get_module_config, update_module_config
@@ -113,7 +115,10 @@ async def create_environment(payload: CreateEnvironmentPayload, tenant_id: str,
 # -------------------------------------------------------------------------
 @router.get("/t/{tenant_id}/e/{environment_id}/", response_class=HTMLResponse)
 async def environment_landing_view(request: Request, tenant_id: str, environment_id: str,
-                                    _: Dict[str, Any] = Depends(require_environment())):
+                                    environment: Dict[str, Any] = Depends(require_environment())):
+    if environment.get("status") == "onboarding":
+        return RedirectResponse(url=f"/t/{tenant_id}/e/{environment_id}/settings", status_code=303)
+
     cards = []
     for m in MODULES:
         cfg = get_module_config(tenant_id, environment_id, m.id, {"enabled": m.default_enabled})
@@ -156,12 +161,14 @@ async def toggle_module(module_id: str, payload: ToggleModulePayload, tenant_id:
 
 # -------------------------------------------------------------------------
 # "/t/{tenant_id}/e/{environment_id}/settings" - environment-level GCP
-# project + tenant-owned service account, and a live "test connection" check.
-# This is NOT the full onboarding wizard (guided gcloud commands, blocking
-# verification before progression, topology choices) - just enough to
-# actually exercise the impersonation code path end-to-end for manual
-# testing. Always reachable regardless of which modules are enabled - it's
-# core environment config, not a module.
+# project + tenant-owned service account, a live "test connection" check, and
+# (while status=="onboarding") the blocking gate a new environment must clear
+# before its module grid becomes reachable - see complete_onboarding() below.
+# This is a guided setup page, not the full wizard from the plan (topology
+# choices, deploy-defaults step) - just enough to exercise the impersonation
+# code path end-to-end and flip status to "active". Always reachable
+# regardless of which modules are enabled - it's core environment config,
+# not a module.
 # -------------------------------------------------------------------------
 @router.get("/t/{tenant_id}/e/{environment_id}/settings", response_class=HTMLResponse)
 async def environment_settings_view(request: Request, tenant_id: str, environment_id: str,
@@ -169,6 +176,7 @@ async def environment_settings_view(request: Request, tenant_id: str, environmen
     return render(request, "environment_settings.html", {
         "active_page": "environment-settings",
         "environment": environment,
+        "runtime_sa_email": settings.RUNTIME_SERVICE_ACCOUNT_EMAIL or "",
     })
 
 
@@ -197,3 +205,33 @@ async def test_environment_connection(tenant_id: str, environment_id: str,
         raise HTTPException(status_code=400, detail="Set a service account email first.")
     project_id = tenant_credentials.project_id_for(environment)
     return tenant_credentials.test_tenant_impersonation(sa_email, project_id)
+
+
+@router.post("/t/{tenant_id}/e/{environment_id}/settings/complete-onboarding")
+async def complete_onboarding(tenant_id: str, environment_id: str,
+                               environment: Dict[str, Any] = Depends(require_environment())):
+    """The blocking gate between initial setup and the module grid (see the
+    redirect in environment_landing_view above): flips status "onboarding" ->
+    "active" so the environment stops bouncing back to /settings. Re-verifies
+    impersonation itself rather than trusting a prior client-side "Test
+    Connection" click - skipped when no tenant-owned SA is configured yet
+    (tenant-zero / manual testing, running as the central app's own identity),
+    matching the settings page's existing support for that fallback."""
+    if environment.get("status") == "active":
+        return {"success": True, "environment": environment}
+
+    sa_email = environment.get("sa_email")
+    if sa_email:
+        project_id = tenant_credentials.project_id_for(environment)
+        result = tenant_credentials.test_tenant_impersonation(sa_email, project_id)
+        if not result.get("success"):
+            detail = result.get("message", "Connection test failed.")
+            if result.get("guidance"):
+                detail = f"{detail} {result['guidance']}"
+            raise HTTPException(status_code=400, detail=detail)
+
+    updated = tenants_db.update_environment(tenant_id, environment_id, {
+        "status": "active",
+        "onboarded_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"success": True, "environment": updated}

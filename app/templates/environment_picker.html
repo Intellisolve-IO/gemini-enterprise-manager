@@ -65,7 +65,7 @@
             });
             const data = await response.json();
             if (response.ok && data.success) {
-                window.location.href = `/t/{{ tenant.id }}/e/${data.environment_id}/`;
+                window.location.href = `/t/{{ tenant.id }}/e/${data.environment_id}/settings`;
             } else {
                 showToast(`Failed to create environment: ${data.detail || 'unknown error'}`, 'error');
                 btn.disabled = false;

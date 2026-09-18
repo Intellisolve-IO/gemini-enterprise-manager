@@ -12,15 +12,17 @@
         </p>
     </div>
 
+    {% if environment.status == 'onboarding' %}
     <div class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-lg text-xs text-amber-800 leading-relaxed">
         <i class="fa-solid fa-triangle-exclamation mr-1 text-amber-600"></i>
-        This is a minimal settings form, not the full guided setup wizard. To configure this environment:
+        This environment isn't active yet. To finish setup:
         <ol class="list-decimal list-inside mt-1 space-y-0.5">
             <li>Create a service account in your own GCP project, and grant it the roles the modules you plan to use require.</li>
-            <li>Grant this app's own runtime service account <code class="bg-amber-100 px-1 py-0.5 rounded">roles/iam.serviceAccountTokenCreator</code> on <strong>that</strong> service account (not your project) - see setup_instructions.md.</li>
-            <li>Enter your project ID and that service account's email below, then test the connection.</li>
+            <li>Grant this app's own runtime service account <code class="bg-amber-100 px-1 py-0.5 rounded">roles/iam.serviceAccountTokenCreator</code> on <strong>that</strong> service account (not your project) - see the command below, or setup_instructions.md.</li>
+            <li>Enter your project ID and that service account's email below, save, test the connection, then click <strong>Finish Setup</strong>.</li>
         </ol>
     </div>
+    {% endif %}
 
     <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
         <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-3 flex items-center">
@@ -46,6 +48,20 @@
             </div>
         </div>
 
+        {% if runtime_sa_email %}
+        <div>
+            <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                    Grant Access (run in your project)
+                </label>
+                <button type="button" onclick="copyGrantCommand()" class="text-xs text-blue-600 hover:underline">
+                    <i class="fa-solid fa-copy mr-1"></i> Copy
+                </button>
+            </div>
+            <pre id="grant-command" class="text-xs bg-slate-900 text-slate-100 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap"></pre>
+        </div>
+        {% endif %}
+
         <div class="pt-4 border-t border-slate-100 flex justify-end gap-3">
             <button id="test-connection-btn" onclick="testConnection()" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
                 <i class="fa-solid fa-vial mr-2 text-blue-600"></i> Test Connection
@@ -65,6 +81,24 @@
             </div>
         </div>
     </div>
+
+    {% if environment.status == 'onboarding' %}
+    <div class="bg-white p-6 rounded-xl border border-blue-200 shadow-sm space-y-3">
+        <h2 class="text-base font-bold text-slate-900 flex items-center">
+            <i class="fa-solid fa-flag-checkered mr-2 text-blue-600"></i> Finish Setup
+        </h2>
+        <p class="text-sm text-slate-500">
+            Verifies the connection one more time and marks this environment active. Until then, its module grid
+            keeps redirecting back here. Skips the check if you're leaving the project/service account blank for
+            manual testing.
+        </p>
+        <div class="flex justify-end">
+            <button id="finish-setup-btn" onclick="finishSetup()" class="inline-flex items-center px-5 py-2.5 border border-transparent text-sm font-semibold rounded-lg text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition">
+                <i class="fa-solid fa-check mr-2"></i> Finish Setup
+            </button>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
 
@@ -144,6 +178,50 @@
             msg.innerText = 'Network request error: ' + err.message;
             guidance.classList.add('hidden');
         } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    {% if runtime_sa_email %}
+    function updateGrantCommand() {
+        const saEmail = document.getElementById('sa-email').value.trim() || '<your-service-account-email>';
+        document.getElementById('grant-command').innerText =
+            `gcloud iam service-accounts add-iam-policy-binding ${saEmail} \\\n` +
+            `  --member="serviceAccount:{{ runtime_sa_email }}" \\\n` +
+            `  --role="roles/iam.serviceAccountTokenCreator"`;
+    }
+    document.getElementById('sa-email').addEventListener('input', updateGrantCommand);
+    updateGrantCommand();
+
+    function copyGrantCommand() {
+        navigator.clipboard.writeText(document.getElementById('grant-command').innerText)
+            .then(() => showToast('Command copied.', 'success'))
+            .catch(() => showToast('Could not copy - select and copy manually.', 'error'));
+    }
+    {% endif %}
+
+    async function finishSetup() {
+        const btn = document.getElementById('finish-setup-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Verifying...`;
+
+        try {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/settings/complete-onboarding', {
+                method: 'POST',
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                showToast('Environment is active.', 'success');
+                window.location.href = '/t/{{ tenant_id }}/e/{{ environment_id }}/';
+            } else {
+                showToast(`Could not finish setup: ${data.detail || 'unknown error'}`, 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+        } catch (err) {
+            showToast('Network error: ' + err.message, 'error');
             btn.disabled = false;
             btn.innerHTML = originalHTML;
         }

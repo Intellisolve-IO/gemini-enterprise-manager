@@ -14,6 +14,7 @@ _MEMBER = {"uid": "u1", "role": "owner", "email": "admin@example.com"}
 _TENANT = {"id": "t1", "name": "Acme Corp", "primary_domain": "acme.com"}
 _ENVIRONMENT = {"id": "env1", "tenant_id": "t1", "display_name": "Prod", "gcp_project_id": "",
                  "status": "onboarding"}
+_ACTIVE_ENVIRONMENT = {**_ENVIRONMENT, "status": "active"}
 
 
 def _client(signed_in=True):
@@ -114,12 +115,21 @@ def test_create_environment():
 def test_environment_landing_lists_all_modules():
     with _signed_in(), \
          patch("app.core.tenants.get_member", return_value=_MEMBER), \
-         patch("app.core.tenants.get_environment", return_value=_ENVIRONMENT), \
+         patch("app.core.tenants.get_environment", return_value=_ACTIVE_ENVIRONMENT), \
          patch("app.core.module_config.get_module_config", return_value={"enabled": False}):
         r = _client().get("/t/t1/e/env1/")
     assert r.status_code == 200
     for title in ("License Sync", "App URL Mapping", "Agent Deployment", "Health Check"):
         assert title in r.text
+
+
+def test_environment_landing_redirects_to_settings_while_onboarding():
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=_ENVIRONMENT):
+        r = _client().get("/t/t1/e/env1/")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/t/t1/e/env1/settings"
 
 
 def test_toggle_module_enables_and_disables():
@@ -198,3 +208,65 @@ def test_test_connection_success():
     assert r.status_code == 200
     assert r.json()["success"] is True
     mock_test.assert_called_once_with("sa@acme-proj.iam.gserviceaccount.com", "acme-proj")
+
+
+def test_complete_onboarding_already_active_is_idempotent():
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=_ACTIVE_ENVIRONMENT), \
+         patch("app.landing.tenant_credentials.test_tenant_impersonation") as mock_test, \
+         patch("app.landing.tenants_db.update_environment") as mock_update:
+        r = _client().post("/t/t1/e/env1/settings/complete-onboarding")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+    mock_test.assert_not_called()
+    mock_update.assert_not_called()
+
+
+def test_complete_onboarding_skips_verification_without_sa_email():
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value={**_ENVIRONMENT, "sa_email": ""}), \
+         patch("app.landing.tenant_credentials.test_tenant_impersonation") as mock_test, \
+         patch("app.landing.tenants_db.update_environment") as mock_update:
+        mock_update.return_value = {**_ENVIRONMENT, "status": "active"}
+        r = _client().post("/t/t1/e/env1/settings/complete-onboarding")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+    mock_test.assert_not_called()
+    args, kwargs = mock_update.call_args
+    assert args[0] == "t1" and args[1] == "env1"
+    assert args[2]["status"] == "active"
+    assert args[2]["onboarded_at"]
+
+
+def test_complete_onboarding_requires_passing_verification():
+    env = {**_ENVIRONMENT, "sa_email": "sa@acme-proj.iam.gserviceaccount.com", "gcp_project_id": "acme-proj"}
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=env), \
+         patch("app.landing.tenant_credentials.test_tenant_impersonation") as mock_test, \
+         patch("app.landing.tenants_db.update_environment") as mock_update:
+        mock_test.return_value = {"success": False, "message": "denied", "guidance": "grant the role"}
+        r = _client().post("/t/t1/e/env1/settings/complete-onboarding")
+    assert r.status_code == 400
+    assert "denied" in r.json()["detail"]
+    mock_update.assert_not_called()
+
+
+def test_complete_onboarding_success_activates_environment():
+    env = {**_ENVIRONMENT, "sa_email": "sa@acme-proj.iam.gserviceaccount.com", "gcp_project_id": "acme-proj"}
+    with _signed_in(), \
+         patch("app.core.tenants.get_member", return_value=_MEMBER), \
+         patch("app.core.tenants.get_environment", return_value=env), \
+         patch("app.landing.tenant_credentials.test_tenant_impersonation") as mock_test, \
+         patch("app.landing.tenants_db.update_environment") as mock_update:
+        mock_test.return_value = {"success": True, "message": "ok"}
+        mock_update.return_value = {**env, "status": "active"}
+        r = _client().post("/t/t1/e/env1/settings/complete-onboarding")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+    mock_test.assert_called_once_with("sa@acme-proj.iam.gserviceaccount.com", "acme-proj")
+    args, kwargs = mock_update.call_args
+    assert args[2]["status"] == "active"
+    assert args[2]["onboarded_at"]
