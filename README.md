@@ -335,8 +335,11 @@ Full rationale: [setup_instructions.md → Required Privileges](setup_instructio
 - **Scheduled sync** does not go through the web service or a browser session — Cloud
   Scheduler executes the Cloud Run job directly, for the one tenant/environment
   configured via `SCHEDULED_SYNC_TENANT_ID`/`SCHEDULED_SYNC_ENVIRONMENT_ID`.
-- `GET /healthz` is always open (Cloud Run probes). DWD/impersonated credentials are
-  never exposed to the browser.
+- `GET /healthz` backs Cloud Run's own startup probe and is reachable internally without
+  auth — but Cloud Run intentionally blocks *external* traffic to whatever path is
+  configured as the startup probe, so it 404s from outside even when the service is
+  healthy. Use `GET /` for an external liveness check instead. DWD/impersonated
+  credentials are never exposed to the browser.
 
 Full setup and hardening notes: [setup_instructions.md → Security Model](setup_instructions.md#security-model).
 
