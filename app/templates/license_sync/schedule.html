@@ -1,8 +1,8 @@
-{% extends "base.html" %}
+{% extends "license_sync/_module_base.html" %}
 
 {% block title %}Sync Schedule &bull; Gemini Provisioner{% endblock %}
 
-{% block content %}
+{% block module_content %}
 <div class="space-y-6 max-w-4xl mx-auto">
     <!-- Header -->
     <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -38,7 +38,7 @@
             </div>
             <div class="bg-slate-50 p-4 rounded-lg">
                 <p class="text-xs text-slate-500">Target Worker Endpoint</p>
-                <p class="text-xs font-mono text-blue-600 truncate mt-1">POST /api/sync/run</p>
+                <p class="text-xs font-mono text-blue-600 truncate mt-1">POST /modules/license-sync/api/sync/run</p>
             </div>
         </div>
     </div>
@@ -102,7 +102,7 @@
             </h2>
             <p class="text-xs text-slate-500 mt-1">
                 Email a full report after every sync run &mdash; what happened, when, why, and a link
-                back to <a href="/history" class="text-blue-600 hover:underline">Run History</a>.
+                back to <a href="/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/history" class="text-blue-600 hover:underline">Run History</a>.
             </p>
         </div>
 
@@ -156,7 +156,7 @@
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Updating Scheduler...`;
 
         try {
-            const response = await fetch('/api/schedule', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/schedule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cron_expression: cronVal })
@@ -188,7 +188,7 @@
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Saving...`;
 
         try {
-            const response = await fetch('/api/notifications', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/notifications', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ notification_emails: emails, notify_on: notifyOn })

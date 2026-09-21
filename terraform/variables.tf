@@ -51,52 +51,40 @@ variable "sync_job_name" {
   default     = "gemini-license-sync-runner"
 }
 
-variable "delegated_admin_email" {
-  description = "Real, active, licensed Google Workspace admin user to impersonate via Domain-Wide Delegation (e.g. workspace-admin@your-domain.com). Must resolve to an existing user or the sync fails with 'invalid_grant: Invalid email or User ID'."
-  type        = string
-  default     = "workspace-admin@your-domain.com"
-}
-
-variable "enable_iap" {
-  description = "Put Identity-Aware Proxy in front of Cloud Run. The app then also requires the IAP user to be a Google Workspace super admin (set iap_audience too)."
-  type        = bool
-  default     = false
-}
-
-variable "iap_audience" {
-  description = "Expected 'aud' of the IAP JWT, e.g. /projects/<PROJECT_NUMBER>/global/backendServices/<ID>. Required when enable_iap = true. Get it from the IAP console or `gcloud iap`."
-  type        = string
-  default     = ""
-}
-
-variable "iap_members" {
-  description = "IAM members allowed through IAP (roles/iap.httpsResourceAccessor). Empty = ['domain:<domain of delegated_admin_email>']. The app still restricts access to super admins."
-  type        = list(string)
-  default     = []
-}
-
-variable "notification_sender_email" {
-  description = "Mailbox to send sync-run notification emails as (Gmail API + DWD). Empty = use delegated_admin_email. Requires the gmail.send scope on the DWD entry."
-  type        = string
-  default     = ""
-}
-
 variable "public_base_url" {
-  description = "Public https base URL of the service, used for links in notification emails. Empty = the app learns it from web traffic."
-  type        = string
-  default     = ""
-}
-
-variable "license_config" {
-  description = "Optional headless default for the Gemini Enterprise license subscription: a Discovery Engine license config resource name (projects/<NUMBER>/locations/<LOC>/licenseConfigs/<ID>). Normally left empty and chosen on the Settings page."
+  description = "Public https base URL of the service, used for links in notification emails. Empty = links fall back to relative paths."
   type        = string
   default     = ""
 }
 
 variable "initial_cron_expression" {
-  description = "Initial cron frequency for Cloud Scheduler (UTC)."
+  description = "Initial cron frequency for Cloud Scheduler (UTC). Applies to the single tenant/environment named by scheduled_sync_tenant_id/scheduled_sync_environment_id until the per-environment scheduling fan-out (Phase 5 of the multi-tenant conversion) replaces this."
   type        = string
   default     = "0 2 * * *"
+}
+
+variable "scheduled_sync_tenant_id" {
+  description = "The tenant_id the scheduled Cloud Run Job syncs, until per-environment scheduling fan-out replaces this single-job model. Leave empty to disable the scheduled job (it will exit 1 every run until set)."
+  type        = string
+  default     = ""
+}
+
+variable "scheduled_sync_environment_id" {
+  description = "The environment_id (within scheduled_sync_tenant_id) the scheduled Cloud Run Job syncs. See scheduled_sync_tenant_id."
+  type        = string
+  default     = ""
+}
+
+variable "firebase_api_key" {
+  description = "Firebase Web API key for the sign-in page's client-side SDK config. Not secret - this is a public identifier, same as any Firebase web app. From the Firebase console's project settings."
+  type        = string
+  default     = ""
+}
+
+variable "firebase_project_id" {
+  description = "The Firebase project ID (usually the same as project_id, once Firebase is added to this GCP project via the Firebase console). Used to derive the client SDK's authDomain."
+  type        = string
+  default     = ""
 }
 
 variable "github_repo" {
@@ -109,4 +97,10 @@ variable "container_image" {
   description = "Docker container image URI for Cloud Run. Overridden by CI/CD on each deploy."
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "enable_url_mapping_module" {
+  description = "Grant the runtime service account roles/compute.loadBalancerAdmin so the App URL Mapping module can provision Load Balancer resources. This is a project-scoped role - it lets the service account manage ANY load balancer resource of these types in the project, not just ones this app created. Leave false until you've decided to accept that blast radius (see the note beside the IAM binding in main.tf); it only grants the permission; enabling the module itself still happens at runtime from the admin UI."
+  type        = bool
+  default     = false
 }

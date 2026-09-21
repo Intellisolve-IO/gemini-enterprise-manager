@@ -4,20 +4,23 @@
 project_id = "your-gcp-project-id"
 region     = "us-central1"
 
-# ── Google Workspace ─────────────────────────────────────────────────────────
-# Must be a real, active, licensed admin user in your Workspace tenant.
-delegated_admin_email = "workspace-admin@your-domain.com"
+# ── Firebase Authentication ─────────────────────────────────────────────────
+# From the Firebase console's project settings, once Firebase is added to this
+# GCP project. Not secret - these are public client-side identifiers.
+firebase_api_key    = "AIzaSy..."
+firebase_project_id = "your-gcp-project-id"
 
-# Gemini Enterprise license subscription — normally chosen on the Settings page.
-# Optional headless default (a Discovery Engine license config resource name):
-# license_config = "projects/123456789/locations/us/licenseConfigs/free_trial_gemini"
-
-# ── Cloud Scheduler ─────────────────────────────────────────────────────────
+# ── Scheduled sync (Phase 1 of the multi-tenant conversion: one designated
+#    tenant/environment, not yet a fan-out across every tenant) ─────────────
+# Leave both empty to disable the scheduled job until you've onboarded a
+# tenant/environment through the app and copied its IDs here.
+# scheduled_sync_tenant_id      = ""
+# scheduled_sync_environment_id = ""
 initial_cron_expression = "0 2 * * *"   # UTC
 
 # ── GitHub (Workload Identity Federation) ───────────────────────────────────
 # Leave "" to skip creating WIF resources.
-github_repo = "my-org/gemini-license-provisioner"
+github_repo = "my-org/gemini-enterprise-manager"
 
 # ── Optional resource names (defaults shown; override only if you must) ──────
 # service_name                = "gemini-license-provisioner"

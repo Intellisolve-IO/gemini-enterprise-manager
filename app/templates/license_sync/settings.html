@@ -1,8 +1,8 @@
-{% extends "base.html" %}
+{% extends "license_sync/_module_base.html" %}
 
 {% block title %}Settings &amp; DWD Connectivity &bull; Gemini Provisioner{% endblock %}
 
-{% block content %}
+{% block module_content %}
 <div class="space-y-6 max-w-4xl mx-auto">
     <!-- Header -->
     <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -136,7 +136,7 @@
 
         try {
             const adminEmail = document.getElementById('admin-email').value.trim();
-            const response = await fetch('/api/test-connection', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/test-connection', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ delegated_admin_email: adminEmail })
@@ -185,7 +185,7 @@
         };
 
         try {
-            const response = await fetch('/api/settings', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

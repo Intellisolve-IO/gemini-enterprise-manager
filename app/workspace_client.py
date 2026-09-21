@@ -3,13 +3,11 @@ import logging
 import os
 from typing import Dict, Any, List, Optional
 
-import google.auth
-from google.auth import iam
-from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from app.config import settings
+from app.core import tenant_credentials
 
 logger = logging.getLogger("gemini_provisioner.workspace")
 
@@ -24,14 +22,17 @@ SCOPES = [
 # even if this scope has not been authorized.
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
-_OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
-
 
 class WorkspaceClient:
     """Client for interacting with Google Workspace Admin Directory and Licensing APIs."""
 
-    def __init__(self, delegated_admin_email: Optional[str] = None):
-        self.delegated_admin_email = delegated_admin_email or settings.DELEGATED_ADMIN_EMAIL
+    def __init__(self, delegated_admin_email: Optional[str] = None, sa_email: Optional[str] = None):
+        self.delegated_admin_email = delegated_admin_email or ""
+        # The tenant-owned service account to impersonate for this call. None
+        # (the default) falls back to the central app's own identity - correct
+        # for tenant-zero and any environment that hasn't registered its own
+        # service account yet (see app/core/tenant_credentials.py).
+        self.sa_email = sa_email
 
     def get_credentials(self, subject_email: Optional[str] = None,
                         scopes: Optional[List[str]] = None):
@@ -44,6 +45,7 @@ class WorkspaceClient:
         scopes = scopes or SCOPES
 
         # 1. Check if raw JSON string is provided in env var (e.g. from Secret Manager)
+        #    Local dev only - always the central app's own key, never a tenant's.
         if settings.SERVICE_ACCOUNT_KEY_JSON:
             try:
                 key_info = json.loads(settings.SERVICE_ACCOUNT_KEY_JSON)
@@ -66,61 +68,10 @@ class WorkspaceClient:
                 logger.error("Failed to load SERVICE_ACCOUNT_KEY_PATH: %s", e)
                 raise
 
-        # 3. Keyless Domain-Wide Delegation via the IAM Service Account Credentials API.
-        #
-        # Application Default Credentials on Cloud Run come from the metadata server
-        # (google.auth.compute_engine.Credentials). Those credentials have no
-        # `with_subject()`, so they cannot perform DWD impersonation on their own -
-        # calling the Directory API with them fails with "404 Domain not found" because
-        # the bare service account belongs to no Workspace domain.
-        #
-        # Instead, use the runtime service account to sign a JWT that asserts the
-        # delegated-admin `subject`, then exchange it for an access token. Requirements:
-        #   * iamcredentials.googleapis.com enabled on the project, and
-        #   * the runtime service account holding roles/iam.serviceAccountTokenCreator
-        #     on itself (so it can call signBlob).
-        try:
-            source_creds, _ = google.auth.default(
-                scopes=["https://www.googleapis.com/auth/cloud-platform"]
-            )
-        except Exception as e:
-            logger.error("Could not obtain default credentials: %s", e)
-            raise RuntimeError(
-                "No valid Google credentials found. Set SERVICE_ACCOUNT_KEY_JSON / "
-                "SERVICE_ACCOUNT_KEY_PATH, or run on GCP with a service account attached."
-            ) from e
-
-        if not subject:
-            # No delegated admin configured; hand back the raw ADC credentials.
-            return source_creds
-
-        sa_email = settings.RUNTIME_SERVICE_ACCOUNT_EMAIL or getattr(
-            source_creds, "service_account_email", None
-        )
-        if not sa_email or sa_email == "default":
-            raise RuntimeError(
-                "Domain-Wide Delegation requires a concrete runtime service account email. "
-                "Set the RUNTIME_SERVICE_ACCOUNT_EMAIL environment variable to the Cloud Run "
-                "service account (e.g. <sa-name>@<project-id>.iam.gserviceaccount.com)."
-            )
-
-        try:
-            signer = iam.Signer(Request(), source_creds, sa_email)
-            return service_account.Credentials(
-                signer=signer,
-                service_account_email=sa_email,
-                token_uri=_OAUTH_TOKEN_URI,
-                scopes=scopes,
-                subject=subject,
-            )
-        except Exception as e:
-            logger.error("Failed to build delegated credentials via IAM Credentials API: %s", e)
-            raise RuntimeError(
-                f"Could not impersonate '{subject}' via Domain-Wide Delegation. Ensure the IAM "
-                "Service Account Credentials API (iamcredentials.googleapis.com) is enabled and "
-                f"that the runtime service account '{sa_email}' has "
-                "roles/iam.serviceAccountTokenCreator on itself."
-            ) from e
+        # 3. Keyless impersonation (self, or a tenant-owned service account) via
+        #    the IAM Service Account Credentials API - see
+        #    app/core/tenant_credentials.py for the mechanism.
+        return tenant_credentials.build_credentials(self.sa_email, scopes, subject=subject)
 
     def get_directory_service(self, subject_email: Optional[str] = None):
         """Construct Google Workspace Admin SDK Directory API client."""
@@ -138,7 +89,7 @@ class WorkspaceClient:
 
     def test_dwd_connection(self, subject_email: Optional[str] = None) -> Dict[str, Any]:
         """Perform a live connectivity and permission test against the Directory API.
-        
+
         Verifies that:
         1. Service Account credentials can be parsed.
         2. DWD impersonation succeeds with the given admin email.
@@ -169,7 +120,7 @@ class WorkspaceClient:
                 )
             elif status_code == 400:
                 guidance = f"Bad request. Ensure '{subject}' is an active admin user in the domain."
-            
+
             return {
                 "success": False,
                 "status_code": status_code,
@@ -198,7 +149,7 @@ class WorkspaceClient:
                 maxResults=200,
                 pageToken=page_token
             ).execute()
-            
+
             for item in response.get("groups", []):
                 groups.append({
                     "id": item.get("id"),
@@ -207,7 +158,7 @@ class WorkspaceClient:
                     "description": item.get("description", ""),
                     "directMembersCount": item.get("directMembersCount", 0)
                 })
-                
+
             page_token = response.get("nextPageToken")
             if not page_token:
                 break

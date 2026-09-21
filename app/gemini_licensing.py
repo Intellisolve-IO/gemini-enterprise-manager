@@ -1,9 +1,11 @@
 """Gemini Enterprise license management via the Discovery Engine API.
 
 This is a Google **Cloud** API (`discoveryengine.googleapis.com`), not a Workspace
-API — it is called with the runtime service account's own credentials (no
-Domain-Wide Delegation). The service account needs `roles/discoveryengine.admin`
-(or an equivalent custom role) on the project.
+API — it is called with an impersonated service account's own credentials (no
+Domain-Wide Delegation). That service account needs `roles/discoveryengine.admin`
+(or an equivalent custom role) on the project - the central app's own service
+account for tenant-zero, or a tenant-owned service account once one is
+configured on the environment (see app/core/tenant_credentials.py).
 
 Concepts:
   * A **license config** is a subscription/pool, e.g.
@@ -18,10 +20,10 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Set
 
-import google.auth
 from google.auth.transport.requests import AuthorizedSession
 
 from app.config import settings
+from app.core import tenant_credentials
 
 logger = logging.getLogger("gemini_provisioner.gemini_licensing")
 
@@ -70,14 +72,17 @@ def _label(cfg: Dict[str, Any]) -> str:
 class GeminiLicenseClient:
     """Thin REST client for Discovery Engine license configs and user licenses."""
 
-    def __init__(self, project_id: Optional[str] = None):
+    def __init__(self, project_id: Optional[str] = None, sa_email: Optional[str] = None):
         self.project_id = project_id or settings.GCP_PROJECT_ID
+        # The tenant-owned service account to impersonate. None falls back to
+        # the central app's own identity - see app/core/tenant_credentials.py.
+        self.sa_email = sa_email
         self._session: Optional[AuthorizedSession] = None
 
     # -- infra ---------------------------------------------------------------
     def _sess(self) -> AuthorizedSession:
         if self._session is None:
-            creds, _ = google.auth.default(scopes=_SCOPES)
+            creds = tenant_credentials.build_credentials(self.sa_email, _SCOPES)
             self._session = AuthorizedSession(creds)
         return self._session
 

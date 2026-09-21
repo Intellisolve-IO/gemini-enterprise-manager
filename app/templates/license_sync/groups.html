@@ -1,9 +1,8 @@
-{% extends "base.html" %}
+{% extends "license_sync/_module_base.html" %}
 
 {% block title %}Monitored Google Groups &bull; Gemini Provisioner{% endblock %}
 
-{% block content %}
-<div class="space-y-6">
+{% block module_content %}
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div>
@@ -35,7 +34,7 @@
                 <strong class="font-bold">Failed to load Google Groups from Workspace domain:</strong>
                 <p class="mt-1">{{ error }}</p>
                 <p class="mt-2">
-                    <a href="/settings" class="underline font-semibold text-rose-900 hover:text-rose-700">Go to Settings &rarr;</a> to test and configure your Domain-Wide Delegation credentials.
+                    <a href="/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/settings" class="underline font-semibold text-rose-900 hover:text-rose-700">Go to Settings &rarr;</a> to test and configure your Domain-Wide Delegation credentials.
                 </p>
             </div>
         </div>
@@ -101,7 +100,6 @@
             </table>
         </div>
     </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -151,7 +149,7 @@
         const selected = Array.from(document.querySelectorAll('.group-checkbox:checked')).map(cb => cb.value);
 
         try {
-            const response = await fetch('/api/groups', {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/modules/license-sync/api/groups', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ groups: selected })

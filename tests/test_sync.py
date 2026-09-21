@@ -27,11 +27,12 @@ def _run(config, members=None, already_licensed=None, batch_result=None):
     gem.assigned_user_emails.return_value = set(already_licensed or [])
     gem.batch_assign.return_value = batch_result or {"assigned": 0, "failed": 0, "errors": [], "operation": None}
     with patch("app.sync_worker.get_config", return_value=config), \
+         patch("app.sync_worker.get_environment", return_value={"sa_email": None, "gcp_project_id": ""}), \
          patch("app.sync_worker.record_sync_history", return_value="doc1"), \
          patch("app.sync_worker.send_sync_notification", return_value={"sent": False}), \
          patch("app.sync_worker.WorkspaceClient", return_value=ws), \
          patch("app.sync_worker.GeminiLicenseClient", return_value=gem):
-        return run_license_sync(triggered_by="test"), ws, gem
+        return run_license_sync("tenant1", "env1", triggered_by="test"), ws, gem
 
 
 def test_skips_users_who_already_have_a_license():

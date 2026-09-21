@@ -41,13 +41,14 @@ def test_should_notify_respects_mode_and_recipients():
 def test_build_message_contains_full_detail_and_history_link():
     cfg = {"notification_emails": ["a@example.com"], "notify_on": "all",
            "public_base_url": "https://prov.example.com"}
-    msg = notifications.build_message(cfg, BASE_RUN)
+    msg = notifications.build_message(cfg, BASE_RUN, "tenant1", "env1")
     assert "PARTIAL_SUCCESS" in msg["subject"]
     for token in ("eng@example.com", "Cloud Scheduler cron trigger", "Licenses assigned",
                   "sub@example.com", "run123"):
         assert token in msg["text"]
-    assert "https://prov.example.com/history" in msg["text"]
-    assert "https://prov.example.com/history" in msg["html"]
+    expected_url = "https://prov.example.com/t/tenant1/e/env1/modules/license-sync/history"
+    assert expected_url in msg["text"]
+    assert expected_url in msg["html"]
 
 
 def test_send_sync_notification_uses_gmail_and_never_raises():
@@ -56,17 +57,17 @@ def test_send_sync_notification_uses_gmail_and_never_raises():
     with patch("app.notifications.WorkspaceClient") as MockClient:
         gmail = MagicMock()
         MockClient.return_value.get_gmail_service.return_value = gmail
-        result = notifications.send_sync_notification(cfg, BASE_RUN)
+        result = notifications.send_sync_notification(cfg, BASE_RUN, "tenant1", "env1")
         assert result["sent"] is True
         gmail.users.return_value.messages.return_value.send.assert_called_once()
 
     with patch("app.notifications.WorkspaceClient", side_effect=RuntimeError("boom")):
-        result = notifications.send_sync_notification(cfg, BASE_RUN)
+        result = notifications.send_sync_notification(cfg, BASE_RUN, "tenant1", "env1")
         assert result["sent"] is False
         assert "boom" in result["reason"]
 
 
 def test_send_skipped_when_not_required():
     cfg = {"notification_emails": [], "notify_on": "all"}
-    result = notifications.send_sync_notification(cfg, BASE_RUN)
+    result = notifications.send_sync_notification(cfg, BASE_RUN, "tenant1", "env1")
     assert result["sent"] is False
