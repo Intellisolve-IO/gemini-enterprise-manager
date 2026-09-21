@@ -6,6 +6,14 @@ terraform {
       version = ">= 6.20.0"
     }
   }
+
+  # Backend blocks can't use variable interpolation - this is intentionally
+  # hardcoded, unlike everything else in this file. Edit directly if you fork
+  # this repo again for a different deployment.
+  backend "gcs" {
+    bucket = "intellisolve-ge-console-tfstate"
+    prefix = "gemini-enterprise-manager"
+  }
 }
 
 provider "google" {
@@ -235,6 +243,27 @@ resource "google_cloud_run_v2_service_iam_member" "public_access" {
   name     = google_cloud_run_v2_service.provisioner.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# -----------------------------------------------------------------------------
+# 4b. Custom Domain Mapping (optional)
+# -----------------------------------------------------------------------------
+# Requires the domain to already be verified for this GCP account in Search
+# Console (https://search.google.com/search-console) - a one-time, account-
+# level step Terraform cannot perform. See setup_instructions.md's "Custom
+# Domain" section.
+resource "google_cloud_run_domain_mapping" "custom_domain" {
+  count    = var.custom_domain != "" ? 1 : 0
+  location = var.region
+  name     = var.custom_domain
+
+  metadata {
+    namespace = var.project_id
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.provisioner.name
+  }
 }
 
 # -----------------------------------------------------------------------------
