@@ -1,9 +1,10 @@
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Optional, Set
 
-from app.config import settings
+from app.core import tenant_credentials
+from app.core.tenants import get_environment
 from app.firestore_db import get_config, record_sync_history
 from app.workspace_client import WorkspaceClient
 from app.gemini_licensing import GeminiLicenseClient, is_valid_config_name, location_from_config_name
@@ -12,27 +13,29 @@ from app.notifications import send_sync_notification
 logger = logging.getLogger("gemini_provisioner.sync")
 
 
-def _notify(config: Dict[str, Any], run_record: Dict[str, Any]) -> None:
+def _notify(config: Dict[str, Any], run_record: Dict[str, Any], tenant_id: str, environment_id: str,
+            sa_email: Optional[str] = None) -> None:
     """Best-effort run notification; never lets a mail error escape."""
     try:
-        result = send_sync_notification(config, run_record)
+        result = send_sync_notification(config, run_record, tenant_id, environment_id, sa_email=sa_email)
         run_record["notification"] = result
     except Exception as e:  # pragma: no cover - defensive
         logger.error("Notification dispatch failed: %s", e)
         run_record["notification"] = {"sent": False, "reason": str(e)}
 
 
-def _finalize(config: Dict[str, Any], run_record: Dict[str, Any]) -> Dict[str, Any]:
+def _finalize(config: Dict[str, Any], run_record: Dict[str, Any], tenant_id: str, environment_id: str,
+              sa_email: Optional[str] = None) -> Dict[str, Any]:
     try:
-        run_record["doc_id"] = record_sync_history(run_record)
+        run_record["doc_id"] = record_sync_history(tenant_id, environment_id, run_record)
     except Exception as e:
         logger.error("Could not write sync record to Firestore: %s", e)
-    _notify(config, run_record)
+    _notify(config, run_record, tenant_id, environment_id, sa_email=sa_email)
     return run_record
 
 
-def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
-    """Core synchronization engine.
+def run_license_sync(tenant_id: str, environment_id: str, triggered_by: str = "scheduled") -> Dict[str, Any]:
+    """Core synchronization engine, scoped to one tenant's one environment.
 
     1. Read monitored groups and the selected Gemini Enterprise license config.
     2. Query direct group members (flat, no nesting); flag nested groups.
@@ -40,14 +43,25 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
     4. Skip users who already hold a license from that config; assign the rest via
        the Discovery Engine batchUpdateUserLicenses API (additive only).
     5. Persist audit stats to Cloud Logging + Firestore, and notify.
+
+    Acts as the environment's own tenant-owned service account (via
+    app/core/tenant_credentials.py) when one is registered on it, falling
+    back to the central app's own identity otherwise - correct for
+    tenant-zero and any environment that hasn't registered its own service
+    account yet.
     """
     start_time = datetime.now(timezone.utc)
     start_perf = time.perf_counter()
-    logger.info("Starting Gemini Enterprise license sync (triggered by: %s)", triggered_by)
+    logger.info("Starting Gemini Enterprise license sync for tenant=%s environment=%s (triggered by: %s)",
+                tenant_id, environment_id, triggered_by)
 
-    config = get_config()
+    environment = get_environment(tenant_id, environment_id) or {}
+    sa_email = environment.get("sa_email")
+    project_id = tenant_credentials.project_id_for(environment)
+
+    config = get_config(tenant_id, environment_id)
     monitored_groups: List[str] = config.get("monitored_groups", [])
-    delegated_email: str = config.get("delegated_admin_email", settings.DELEGATED_ADMIN_EMAIL)
+    delegated_email: str = config.get("delegated_admin_email", "")
     license_config: str = (config.get("license_config") or "").strip()
     license_label: str = config.get("license_label") or license_config
 
@@ -74,7 +88,7 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
     # --- guards ---------------------------------------------------------------
     if not license_config:
         logger.error("No Gemini Enterprise license subscription selected in configuration.")
-        return _finalize(config, base_record(
+        return _finalize(config, tenant_id=tenant_id, environment_id=environment_id, sa_email=sa_email, run_record=base_record(
             status="FAILED",
             errors_count=1,
             errors=[{"item": "config", "type": "NO_LICENSE_CONFIG",
@@ -84,7 +98,7 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
 
     if not is_valid_config_name(license_config):
         logger.error("Configured license_config is not a Gemini Enterprise license resource: %s", license_config)
-        return _finalize(config, base_record(
+        return _finalize(config, tenant_id=tenant_id, environment_id=environment_id, sa_email=sa_email, run_record=base_record(
             status="FAILED",
             errors_count=1,
             errors=[{"item": license_config, "type": "INVALID_LICENSE_CONFIG",
@@ -96,11 +110,11 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
 
     if not monitored_groups:
         logger.warning("No Google Groups configured for monitoring in Firestore.")
-        return _finalize(config, base_record(status="SUCCESS", message="No groups configured for monitoring."))
+        return _finalize(config, tenant_id=tenant_id, environment_id=environment_id, sa_email=sa_email, run_record=base_record(status="SUCCESS", message="No groups configured for monitoring."))
 
     location = location_from_config_name(license_config)
-    ws = WorkspaceClient(delegated_admin_email=delegated_email)
-    gem = GeminiLicenseClient()
+    ws = WorkspaceClient(delegated_admin_email=delegated_email, sa_email=sa_email)
+    gem = GeminiLicenseClient(project_id=project_id, sa_email=sa_email)
 
     errors: List[Dict[str, Any]] = []
     nested_groups_skipped: List[Dict[str, str]] = []
@@ -193,7 +207,7 @@ def run_license_sync(triggered_by: str = "scheduled") -> Dict[str, Any]:
         errors=errors[:50],
     )
 
-    _finalize(config, run_record)
+    _finalize(config, run_record, tenant_id, environment_id, sa_email=sa_email)
 
     logger.info(
         "Sync completed in %.2fs. Evaluated: %d, Assigned: %d, Already Held: %d, Nested Groups Skipped: %d, Errors: %d",

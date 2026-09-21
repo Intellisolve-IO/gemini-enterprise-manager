@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+
+{% block title %}Environment Settings &bull; Gemini Enterprise Admin Console{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-3xl mx-auto">
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">{{ environment.display_name }}</p>
+        <h1 class="text-2xl font-bold text-slate-900 tracking-tight mt-1">Environment Settings</h1>
+        <p class="text-sm text-slate-500 mt-1">
+            <a href="/t/{{ tenant_id }}/e/{{ environment_id }}/" class="text-blue-600 hover:underline">&larr; Back to modules</a>
+        </p>
+    </div>
+
+    {% if environment.status == 'onboarding' %}
+    <div class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-lg text-xs text-amber-800 leading-relaxed">
+        <i class="fa-solid fa-triangle-exclamation mr-1 text-amber-600"></i>
+        This environment isn't active yet. To finish setup:
+        <ol class="list-decimal list-inside mt-1 space-y-0.5">
+            <li>Create a service account in your own GCP project, and grant it the roles the modules you plan to use require.</li>
+            <li>Grant this app's own runtime service account <code class="bg-amber-100 px-1 py-0.5 rounded">roles/iam.serviceAccountTokenCreator</code> on <strong>that</strong> service account (not your project) - see the command below, or setup_instructions.md.</li>
+            <li>Enter your project ID and that service account's email below, save, test the connection, then click <strong>Finish Setup</strong>.</li>
+        </ol>
+    </div>
+    {% endif %}
+
+    <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+        <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-3 flex items-center">
+            <i class="fa-solid fa-sliders mr-2 text-indigo-600"></i> GCP Project &amp; Service Account
+        </h2>
+
+        <div class="grid grid-cols-1 gap-5">
+            <div>
+                <label for="gcp-project-id" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    GCP Project ID
+                </label>
+                <input type="text" id="gcp-project-id" value="{{ environment.gcp_project_id or '' }}" placeholder="my-company-project"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-blue-500 focus:border-blue-500 bg-white">
+                <p class="text-xs text-slate-400 mt-1">Leave blank to use this app's own project (only correct for manual/testing use).</p>
+            </div>
+            <div>
+                <label for="sa-email" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    Service Account Email
+                </label>
+                <input type="email" id="sa-email" value="{{ environment.sa_email or '' }}" placeholder="my-sa@my-company-project.iam.gserviceaccount.com"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-blue-500 focus:border-blue-500 bg-white">
+                <p class="text-xs text-slate-400 mt-1">Leave blank to run as this app's own identity (only correct for manual/testing use).</p>
+            </div>
+        </div>
+
+        {% if runtime_sa_email %}
+        <div>
+            <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                    Grant Access (run in your project)
+                </label>
+                <button type="button" onclick="copyGrantCommand()" class="text-xs text-blue-600 hover:underline">
+                    <i class="fa-solid fa-copy mr-1"></i> Copy
+                </button>
+            </div>
+            <pre id="grant-command" class="text-xs bg-slate-900 text-slate-100 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap"></pre>
+        </div>
+        {% endif %}
+
+        <div class="pt-4 border-t border-slate-100 flex justify-end gap-3">
+            <button id="test-connection-btn" onclick="testConnection()" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-lg text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                <i class="fa-solid fa-vial mr-2 text-blue-600"></i> Test Connection
+            </button>
+            <button id="save-settings-btn" onclick="saveSettings()" class="inline-flex items-center px-5 py-2.5 border border-transparent text-sm font-semibold rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                <i class="fa-solid fa-floppy-disk mr-2"></i> Save
+            </button>
+        </div>
+
+        <div id="test-result-box" class="hidden p-4 rounded-lg border text-sm">
+            <div class="flex items-start space-x-3">
+                <i id="test-result-icon" class="text-lg mt-0.5"></i>
+                <div class="space-y-1.5 flex-1">
+                    <p id="test-result-msg" class="font-semibold"></p>
+                    <div id="test-result-guidance" class="text-xs mt-2 p-2.5 rounded bg-white/70 border"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if environment.status == 'onboarding' %}
+    <div class="bg-white p-6 rounded-xl border border-blue-200 shadow-sm space-y-3">
+        <h2 class="text-base font-bold text-slate-900 flex items-center">
+            <i class="fa-solid fa-flag-checkered mr-2 text-blue-600"></i> Finish Setup
+        </h2>
+        <p class="text-sm text-slate-500">
+            Verifies the connection one more time and marks this environment active. Until then, its module grid
+            keeps redirecting back here. Skips the check if you're leaving the project/service account blank for
+            manual testing.
+        </p>
+        <div class="flex justify-end">
+            <button id="finish-setup-btn" onclick="finishSetup()" class="inline-flex items-center px-5 py-2.5 border border-transparent text-sm font-semibold rounded-lg text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition">
+                <i class="fa-solid fa-check mr-2"></i> Finish Setup
+            </button>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function saveSettings() {
+        const btn = document.getElementById('save-settings-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Saving...`;
+
+        try {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    gcp_project_id: document.getElementById('gcp-project-id').value.trim(),
+                    sa_email: document.getElementById('sa-email').value.trim(),
+                })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                showToast('Environment settings saved.', 'success');
+            } else {
+                showToast(`Failed to save: ${data.detail || 'unknown error'}`, 'error');
+            }
+        } catch (err) {
+            showToast('Network error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    async function testConnection() {
+        const btn = document.getElementById('test-connection-btn');
+        const box = document.getElementById('test-result-box');
+        const icon = document.getElementById('test-result-icon');
+        const msg = document.getElementById('test-result-msg');
+        const guidance = document.getElementById('test-result-guidance');
+
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Testing...`;
+        box.classList.remove('hidden');
+        box.className = 'p-4 rounded-lg border text-sm bg-slate-50 border-slate-200 text-slate-700';
+        icon.className = 'fa-solid fa-spinner fa-spin text-blue-600';
+        msg.innerText = 'Attempting impersonation and a live API call...';
+        guidance.classList.add('hidden');
+
+        try {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/settings/test-connection', {
+                method: 'POST',
+            });
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                box.className = 'p-4 rounded-lg border text-sm bg-emerald-50 border-emerald-300 text-emerald-900';
+                icon.className = 'fa-solid fa-circle-check text-emerald-600';
+                msg.innerText = data.message;
+                guidance.classList.add('hidden');
+                showToast('Connection test passed.', 'success');
+            } else {
+                box.className = 'p-4 rounded-lg border text-sm bg-rose-50 border-rose-300 text-rose-900';
+                icon.className = 'fa-solid fa-circle-xmark text-rose-600';
+                msg.innerText = data.message || data.detail || 'Connection test failed.';
+                if (data.guidance) {
+                    guidance.classList.remove('hidden');
+                    guidance.className = 'text-xs mt-2 p-2.5 rounded bg-white border border-rose-200 text-rose-800';
+                    guidance.innerHTML = `<strong>Troubleshooting:</strong> ${data.guidance}`;
+                }
+                showToast('Connection test failed. See details below.', 'error');
+            }
+        } catch (err) {
+            box.className = 'p-4 rounded-lg border text-sm bg-rose-50 border-rose-300 text-rose-900';
+            icon.className = 'fa-solid fa-triangle-exclamation text-rose-600';
+            msg.innerText = 'Network request error: ' + err.message;
+            guidance.classList.add('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    {% if runtime_sa_email %}
+    function updateGrantCommand() {
+        const saEmail = document.getElementById('sa-email').value.trim() || '<your-service-account-email>';
+        document.getElementById('grant-command').innerText =
+            `gcloud iam service-accounts add-iam-policy-binding ${saEmail} \\\n` +
+            `  --member="serviceAccount:{{ runtime_sa_email }}" \\\n` +
+            `  --role="roles/iam.serviceAccountTokenCreator"`;
+    }
+    document.getElementById('sa-email').addEventListener('input', updateGrantCommand);
+    updateGrantCommand();
+
+    function copyGrantCommand() {
+        navigator.clipboard.writeText(document.getElementById('grant-command').innerText)
+            .then(() => showToast('Command copied.', 'success'))
+            .catch(() => showToast('Could not copy - select and copy manually.', 'error'));
+    }
+    {% endif %}
+
+    async function finishSetup() {
+        const btn = document.getElementById('finish-setup-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Verifying...`;
+
+        try {
+            const response = await fetch('/t/{{ tenant_id }}/e/{{ environment_id }}/settings/complete-onboarding', {
+                method: 'POST',
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                showToast('Environment is active.', 'success');
+                window.location.href = '/t/{{ tenant_id }}/e/{{ environment_id }}/';
+            } else {
+                showToast(`Could not finish setup: ${data.detail || 'unknown error'}`, 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+        } catch (err) {
+            showToast('Network error: ' + err.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+</script>
+{% endblock %}

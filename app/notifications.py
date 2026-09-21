@@ -11,7 +11,7 @@ import html
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.config import settings
 from app.workspace_client import WorkspaceClient
@@ -38,9 +38,10 @@ def should_notify(config: Dict[str, Any], run_record: Dict[str, Any]) -> bool:
     return str(run_record.get("status", "")).upper() in _FAILURE_STATUSES
 
 
-def _history_url(config: Dict[str, Any]) -> str:
+def _history_url(config: Dict[str, Any], tenant_id: str, environment_id: str) -> str:
     base = (settings.PUBLIC_BASE_URL or config.get("public_base_url") or "").rstrip("/")
-    return f"{base}/history" if base else "/history"
+    path = f"/t/{tenant_id}/e/{environment_id}/modules/license-sync/history"
+    return f"{base}{path}" if base else path
 
 
 def _explain_why(run_record: Dict[str, Any]) -> str:
@@ -52,7 +53,8 @@ def _explain_why(run_record: Dict[str, Any]) -> str:
     }.get(trig, trig)
 
 
-def build_message(config: Dict[str, Any], run_record: Dict[str, Any]) -> Dict[str, str]:
+def build_message(config: Dict[str, Any], run_record: Dict[str, Any],
+                   tenant_id: str, environment_id: str) -> Dict[str, str]:
     """Return {subject, text, html} describing the run in full."""
     status = str(run_record.get("status", "UNKNOWN")).upper()
     assigned = run_record.get("licenses_assigned_count", 0)
@@ -67,7 +69,7 @@ def build_message(config: Dict[str, Any], run_record: Dict[str, Any]) -> Dict[st
     duration = run_record.get("duration_seconds", "n/a")
     why = _explain_why(run_record)
     doc_id = run_record.get("doc_id", "")
-    history_url = _history_url(config)
+    history_url = _history_url(config, tenant_id, environment_id)
 
     subject = (
         f"[Gemini License Sync] {status} - "
@@ -168,8 +170,14 @@ def build_message(config: Dict[str, Any], run_record: Dict[str, Any]) -> Dict[st
     return {"subject": subject, "text": text, "html": html_body}
 
 
-def send_sync_notification(config: Dict[str, Any], run_record: Dict[str, Any]) -> Dict[str, Any]:
+def send_sync_notification(config: Dict[str, Any], run_record: Dict[str, Any],
+                            tenant_id: str, environment_id: str,
+                            sa_email: Optional[str] = None) -> Dict[str, Any]:
     """Send the run notification if the saved preference calls for it.
+
+    `sa_email` is the environment's own tenant-owned service account to
+    impersonate (None falls back to the central app's own identity - see
+    app/core/tenant_credentials.py).
 
     Returns a small result dict; never raises.
     """
@@ -177,12 +185,10 @@ def send_sync_notification(config: Dict[str, Any], run_record: Dict[str, Any]) -
     if not should_notify(config, run_record):
         return {"sent": False, "reason": "not required by notify_on preference or no recipients"}
 
-    sender = (
-        settings.NOTIFICATION_SENDER_EMAIL
-        or config.get("delegated_admin_email")
-        or settings.DELEGATED_ADMIN_EMAIL
-    )
-    parts = build_message(config, run_record)
+    sender = config.get("delegated_admin_email")
+    if not sender:
+        return {"sent": False, "reason": "no delegated_admin_email configured for this environment"}
+    parts = build_message(config, run_record, tenant_id, environment_id)
 
     mime = MIMEMultipart("alternative")
     mime["To"] = ", ".join(recipients)
@@ -193,7 +199,7 @@ def send_sync_notification(config: Dict[str, Any], run_record: Dict[str, Any]) -
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
 
     try:
-        service = WorkspaceClient().get_gmail_service(subject_email=sender)
+        service = WorkspaceClient(sa_email=sa_email).get_gmail_service(subject_email=sender)
         service.users().messages().send(userId="me", body={"raw": raw}).execute()
         logger.info("Sent sync notification to %s (status %s)", recipients, run_record.get("status"))
         return {"sent": True, "recipients": recipients}

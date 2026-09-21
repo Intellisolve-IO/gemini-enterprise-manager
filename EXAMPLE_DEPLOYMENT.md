@@ -62,7 +62,7 @@ Delegated admin impersonated at runtime: `ws-provisioner@acme.example`.
 ## Result
 
 - Cloud Run service: `https://gemini-license-provisioner-abcde12345-uc.a.run.app`
-- Settings / Test Connection: `…/settings`
+- Settings / Test Connection: `…/modules/license-sync/settings`
 - Runtime + CI/CD service account `sa-gemini-provisioner@acme-licensing-prod.iam.gserviceaccount.com`
   with `datastore.user`, `discoveryengine.admin`, `cloudscheduler.admin`,
   `logging.logWriter`, `run.admin`, `artifactregistry.admin`, `iam.serviceAccountUser`,
