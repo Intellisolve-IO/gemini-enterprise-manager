@@ -32,3 +32,14 @@ output "workload_identity_provider" {
   description = "Workload Identity Provider resource name for GitHub Actions."
   value       = length(google_iam_workload_identity_pool_provider.github_provider) > 0 ? google_iam_workload_identity_pool_provider.github_provider[0].name : "N/A (Provide github_repo in variables to generate)"
 }
+
+output "custom_domain_dns_records" {
+  description = "DNS records to create at your DNS provider for the custom domain mapping. Empty until custom_domain is set and the mapping resource is created (may need a second apply/refresh - see setup_instructions.md)."
+  value = length(google_cloud_run_domain_mapping.custom_domain) > 0 ? [
+    for r in google_cloud_run_domain_mapping.custom_domain[0].status[0].resource_records : {
+      type   = r.type
+      name   = r.name
+      rrdata = r.rrdata
+    }
+  ] : []
+}

@@ -57,6 +57,12 @@ variable "public_base_url" {
   default     = ""
 }
 
+variable "custom_domain" {
+  description = "Custom domain to map to the Cloud Run service (e.g. 'app.example.com'). Leave empty to skip creating a domain mapping and use only the *.run.app URL. Requires the domain's ownership to already be verified for this GCP account/project (Search Console) before Terraform can create the mapping."
+  type        = string
+  default     = ""
+}
+
 variable "initial_cron_expression" {
   description = "Initial cron frequency for Cloud Scheduler (UTC). Applies to the single tenant/environment named by scheduled_sync_tenant_id/scheduled_sync_environment_id until the per-environment scheduling fan-out (Phase 5 of the multi-tenant conversion) replaces this."
   type        = string

@@ -22,6 +22,11 @@ initial_cron_expression = "0 2 * * *"   # UTC
 # Leave "" to skip creating WIF resources.
 github_repo = "my-org/gemini-enterprise-manager"
 
+# ── Custom domain (optional) ─────────────────────────────────────────────────
+# Requires the domain to already be verified for this GCP account in Search
+# Console. See setup_instructions.md's "Custom Domain" section.
+# custom_domain = "app.example.com"
+
 # ── Optional resource names (defaults shown; override only if you must) ──────
 # service_name                = "gemini-license-provisioner"
 # app_service_account_id       = "sa-gemini-provisioner"
