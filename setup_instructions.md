@@ -330,9 +330,14 @@ Needs a live Cloud Run service to target, so do this after Step 6.
    ```
 4. **DNS**: at your DNS provider, publish exactly what `resourceRecords` (or Terraform's
    `custom_domain_dns_records` output) returns — don't assume a specific target.
-5. **Verify**: `curl -I https://app.example.com/healthz` once DNS propagates and Cloud
-   Run's managed TLS certificate provisions — this can take up to ~24h on a brand-new
-   mapping, which is normal, not a failure.
+5. **Verify**: `curl -I https://app.example.com/` once DNS propagates and Cloud Run's
+   managed TLS certificate provisions — this can take up to ~24h on a brand-new mapping,
+   which is normal, not a failure. Don't use `/healthz` for this check: Cloud Run
+   intentionally blocks external traffic to whatever path is configured as the
+   container's startup probe (`/healthz` here — see `terraform/main.tf`'s
+   `startup_probe` block), so it 404s from the outside even when the service is healthy.
+   That's expected platform behavior, not a failure — it's why `/` is the right
+   external check.
 6. **Follow-up**: set `PUBLIC_BASE_URL=https://app.example.com` as a GitHub Actions
    repository variable (already consumed by `deploy.yml`) and in `terraform.tfvars`, so
    License Sync notification emails link to the custom domain instead of the `*.run.app`
