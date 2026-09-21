@@ -7,7 +7,7 @@ opening a public issue.
 
 ## Reporting a vulnerability
 
-Email **david@hoffshouse.com** with:
+Email **security@intellisolve.io** with:
 
 - A description of the issue and its potential impact.
 - Steps to reproduce, or a proof of concept if you have one.
