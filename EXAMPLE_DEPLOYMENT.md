@@ -60,8 +60,8 @@ unset here because the workflow defaults already match.
 - Console's own runtime + CI/CD service account
   `sa-gemini-provisioner@acme-ge-console.iam.gserviceaccount.com` with `datastore.user`,
   `discoveryengine.admin`, `cloudscheduler.admin`, `logging.logWriter`,
-  `iam.securityReviewer`, `serviceusage.serviceUsageViewer`, `run.admin`,
-  `artifactregistry.admin`, `iam.serviceAccountUser`, and
+  `firebaseauth.admin`, `iam.securityReviewer`, `serviceusage.serviceUsageViewer`,
+  `run.admin`, `artifactregistry.admin`, `iam.serviceAccountUser`, and
   `iam.serviceAccountTokenCreator` on itself.
 
 ### Custom Domain

@@ -96,6 +96,7 @@ script predates them.
 | `roles/discoveryengine.admin` | project | Tenant-zero: list Gemini Enterprise license subscriptions; check/assign user licenses under the console's own project |
 | `roles/cloudscheduler.admin` | project | The **Sync Schedule** page edits the scheduler job at runtime |
 | `roles/logging.logWriter` | project | Structured logs |
+| `roles/firebaseauth.admin` **(not in `setup_wif.sh` yet — grant separately)** | project | Required for the Firebase Admin SDK to mint/verify session cookies server-side (`app/core/firebase_auth.py`, running as this service account via ADC). Without it, sign-in fails with `Could not create a session` / server-side `INSUFFICIENT_PERMISSION` even though the client-side Google sign-in itself succeeds. |
 | `roles/iam.serviceAccountTokenCreator` | **on itself** | Sign JWTs for keyless impersonation — both tenant-zero self-impersonation and the identity every cross-project impersonation call starts from |
 | `roles/iam.securityReviewer` **(not in `setup_wif.sh` yet — grant separately)** | project | Tenant-zero: read-only IAM policy inspection for the **Health Check** module |
 | `roles/serviceusage.serviceUsageViewer` **(not in `setup_wif.sh` yet — grant separately)** | project | Tenant-zero: read-only enabled-API inspection for the **Health Check** module |
@@ -185,6 +186,7 @@ for ROLE in \
   roles/discoveryengine.admin \
   roles/cloudscheduler.admin \
   roles/logging.logWriter \
+  roles/firebaseauth.admin \
   roles/iam.securityReviewer \
   roles/serviceusage.serviceUsageViewer \
   roles/run.admin \
@@ -254,9 +256,12 @@ PROJECT_ID="${PROJECT_ID}" SA_NAME="${SA_NAME}" REGION="${REGION}" \
 `setup_wif.sh` creates the service account (if missing), applies its baseline
 project-level roles, grants `roles/iam.serviceAccountTokenCreator` on the account to
 itself, and creates the Workload Identity pool/provider. (It does **not** yet grant
-`roles/iam.securityReviewer` or `roles/serviceusage.serviceUsageViewer` — add those with
-the loop in [Step 3](#step-3-create-the-consoles-service-account--grant-gcp-roles) if
-you haven't already.)
+`roles/firebaseauth.admin`, `roles/iam.securityReviewer`, or
+`roles/serviceusage.serviceUsageViewer` — add those with the loop in
+[Step 3](#step-3-create-the-consoles-service-account--grant-gcp-roles) if you haven't
+already. Skipping `firebaseauth.admin` means sign-in will fail with
+`Could not create a session` once you deploy — see
+[Troubleshooting](#sign-in-succeeds-in-the-browser-but-the-app-shows-could-not-create-a-session).)
 
 It prints two values. Add them under **GitHub → Settings → Secrets and variables →
 Actions → Repository secrets**:
@@ -610,6 +615,39 @@ service account, if this environment is running as tenant-zero).
 Google sign-in isn't enabled in the Firebase console (see
 [Step 4](#step-4-set-up-firebase-authentication)). Check the browser console for a
 Firebase SDK error.
+
+### Sign-in shows `auth/unauthorized-domain`
+
+The domain you're loading the app from isn't in Firebase's authorized-domains list —
+Firebase only auto-authorizes `{project-id}.firebaseapp.com` and `.web.app`, **not** a
+Cloud Run `*.run.app` URL or a custom domain. Add every hostname you actually serve the
+app from (both `*.run.app` URLs from `gcloud run services describe`'s
+`run.googleapis.com/urls` annotation, plus your custom domain once mapped) under
+**Firebase console → Authentication → Settings → Authorized domains**, or via the
+Identity Toolkit Admin API:
+```bash
+TOKEN=$(gcloud auth application-default print-access-token)
+curl -s -X PATCH \
+  "https://identitytoolkit.googleapis.com/admin/v2/projects/${PROJECT_ID}/config?updateMask=authorizedDomains" \
+  -H "Authorization: Bearer ${TOKEN}" -H "x-goog-user-project: ${PROJECT_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{"authorizedDomains": ["localhost", "'"${PROJECT_ID}"'.firebaseapp.com", "'"${PROJECT_ID}"'.web.app", "your-run-app-url-here", "your-custom-domain-here"]}'
+```
+
+### Sign-in succeeds in the browser but the app shows `Could not create a session`
+
+The client-side Google sign-in worked, but the server-side session-cookie mint failed.
+Check the Cloud Run service's logs for `Failed to mint session cookie` — if it says
+`INSUFFICIENT_PERMISSION`, the console's runtime service account is missing
+`roles/firebaseauth.admin` (needed by `app/core/firebase_auth.py`'s
+`create_session_cookie()` call, which runs as that service account via Application
+Default Credentials). Grant it and retry:
+```bash
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" --role="roles/firebaseauth.admin" --condition=None
+```
+This is one of the roles `setup_wif.sh` doesn't grant yet — see the note in
+[Step 5](#step-5-configure-workload-identity-federation-wif-for-github-actions).
 
 ### A new environment's module grid keeps redirecting back to Settings
 

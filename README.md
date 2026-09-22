@@ -302,9 +302,10 @@ pushed commit to `main` builds and deploys automatically.
   `run.admin` + `artifactregistry.admin` + `cloudscheduler.admin` +
   `iam.workloadIdentityPoolAdmin`.
 - **Central app's runtime/CI service account**: `datastore.user`,
-  `cloudscheduler.admin`, `logging.logWriter`, `run.admin`, `artifactregistry.admin`,
-  `iam.serviceAccountUser`, and `iam.serviceAccountTokenCreator` **on itself** (its own
-  keyless impersonation for tenant-zero / self-service).
+  `cloudscheduler.admin`, `logging.logWriter`, `firebaseauth.admin` (session-cookie
+  minting for sign-in), `run.admin`, `artifactregistry.admin`, `iam.serviceAccountUser`,
+  and `iam.serviceAccountTokenCreator` **on itself** (its own keyless impersonation for
+  tenant-zero / self-service).
 - **Per tenant, per environment**: the tenant grants the central app's runtime service
   account `roles/iam.serviceAccountTokenCreator` **on their own environment's service
   account**, and grants that service account whatever project roles its enabled modules

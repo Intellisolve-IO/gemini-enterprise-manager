@@ -99,6 +99,18 @@ resource "google_project_iam_member" "sa_gemini_licenses" {
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
+# Firebase Authentication: mint/verify session cookies from the Admin SDK
+# (app/core/firebase_auth.py, initialize_app() with no arguments, so it runs
+# as this service account via Application Default Credentials). Without this,
+# create_session_cookie() fails server-side with INSUFFICIENT_PERMISSION and
+# sign-in never completes, even though the client-side ID token exchange
+# itself succeeds.
+resource "google_project_iam_member" "sa_firebase_auth_admin" {
+  project = var.project_id
+  role    = "roles/firebaseauth.admin"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
 # Health Check module: read-only IAM policy + enabled-API introspection.
 # Both are read-only predefined roles - no change to the service account's
 # write-level blast radius.
